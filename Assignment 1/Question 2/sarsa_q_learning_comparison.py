@@ -2,7 +2,7 @@ from collections import defaultdict
 import gymnasium as gym
 import numpy as np
 from tqdm import tqdm
-
+import multiprocessing
 
 class AcrobatAgent:
     def __init__(
@@ -120,35 +120,39 @@ def train_and_get_returns(algo="q_learning"):
         
     return episode_returns
 
+if __name__ == "__main__":
+    with multiprocessing.Pool(processes=2) as pool:
+            # map() runs the function with different arguments in parallel
+            # Note: we pass the arguments as a list
+            results = pool.map(train_and_get_returns, ["q_learning", "sarsa"])
 
-q_returns = train_and_get_returns("q_learning")
-sarsa_returns = train_and_get_returns("sarsa")
+    # 2. Unpack the results
+    q_returns, sarsa_returns = results
+    import matplotlib.pyplot as plt
 
-import matplotlib.pyplot as plt
+    def moving_average(data, window=500):
+        return np.convolve(data, np.ones(window)/window, mode='valid')
 
-def moving_average(data, window=500):
-    return np.convolve(data, np.ones(window)/window, mode='valid')
+    import pandas as pd
+    df = pd.DataFrame({
+        "episode": np.arange(len(q_returns)),
+        "q_learning": q_returns,
+        "sarsa": sarsa_returns
+    })
+    df.to_csv("acrobot_results_100k_exponential_decay.csv", index=False)
 
-import pandas as pd
-df = pd.DataFrame({
-    "episode": np.arange(len(q_returns)),
-    "q_learning": q_returns,
-    "sarsa": sarsa_returns
-})
-df.to_csv("acrobot_results_50k_exponential_decay.csv", index=False)
+    plt.figure(figsize=(12, 6))
 
-plt.figure(figsize=(12, 6))
-
-# Plot smoothed lines
-plt.plot(moving_average(q_returns), label="Q-Learning", linewidth=2)
-plt.plot(moving_average(sarsa_returns), label="SARSA", linewidth=2)
+    # Plot smoothed lines
+    plt.plot(moving_average(q_returns), label="Q-Learning", linewidth=2)
+    plt.plot(moving_average(sarsa_returns), label="SARSA", linewidth=2)
 
 
-plt.title("Acrobot-v1: Q-Learning vs SARSA Returns")
-plt.xlabel("Episode")
-plt.ylabel("Total Reward (Return)")
-# plt.axhline(y=-100, color='r', linestyle='--', label='Target Performance') # Example goal threshold
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.savefig("acrobot_comparison_50k.png", dpi=300, bbox_inches='tight')
-plt.show()
+    plt.title("Acrobot-v1: Q-Learning vs SARSA Returns")
+    plt.xlabel("Episode")
+    plt.ylabel("Total Reward (Return)")
+    # plt.axhline(y=-100, color='r', linestyle='--', label='Target Performance') # Example goal threshold
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig("acrobot_comparison_100k_exponential_decay.png", dpi=300, bbox_inches='tight')
+    plt.show()
