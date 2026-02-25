@@ -73,7 +73,7 @@ class DroneGridWorld:
             reward = -1  # Base per-step penalty 
             
             if (nx, ny) in self.hazards:
-                reward -= 10  # Additional hazard penalty 
+                reward -= 90  # Additional hazard penalty 
             elif (nx, ny) in self.boulders:
                 reward = -100  # Crash cost 
             elif (nx, ny) == self.fire_zone and new_has_water:
@@ -107,6 +107,8 @@ class DroneGridWorld:
         policy = {}
         for s in self.states:
             if self.terminal_check(s):
+                # Optionally mark terminal states for visualization 
+                policy[s] = 'Done'
                 continue
                 
             action_returns = {}
@@ -115,8 +117,19 @@ class DroneGridWorld:
                                     for ns, p, r in self.get_transitions(s, a))
                 action_returns[a] = expected_return
             
-            # Pythonic Argmax: find the key with the maximum value
-            policy[s] = max(action_returns, key=action_returns.get)
+            # Get the maximum value available among all actions 
+            max_val = max(action_returns.values())
+            
+            # Find all actions that achieve this maximum value
+            best_actions = [a for a, v in action_returns.items() if np.isclose(v, max_val)]
+            
+            if len(best_actions) > 1 and 'Hover' in best_actions:
+                # If there is a tie and Hover is one of the options, 
+                # pick any best action that is NOT Hover [cite: 43, 44]
+                policy[s] = [a for a in best_actions if a != 'Hover'][0]
+            else:
+                # Otherwise, just pick the best action (or the first one if still tied)
+                policy[s] = best_actions[0]
 
         return V, policy
 
