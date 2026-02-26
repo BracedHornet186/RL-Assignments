@@ -86,7 +86,7 @@ def train_and_get_returns(algo="q_learning"):
     env = gym.make('Acrobot-v1')
     learning_rate = 0.01        # How fast to learn (higher = faster but less stable)
     n_episodes = 50000        # Number of hands to practice
-    start_epsilon = 1.0         # Start with 100% random actions
+    start_epsilon = 0.2        # Start with 100% random actions
     final_epsilon = 0.1         # Always keep some exploration
     epsilon_decay = np.exp(np.log(final_epsilon / start_epsilon) / n_episodes)
 
