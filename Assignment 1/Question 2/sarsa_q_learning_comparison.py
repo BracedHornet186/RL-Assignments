@@ -1,158 +1,176 @@
-from collections import defaultdict
-import gymnasium as gym
+import os
 import numpy as np
+import gymnasium as gym
+import pandas as pd
+import matplotlib.pyplot as plt
 from tqdm import tqdm
-import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
-class AcrobatAgent:
-    def __init__(
-            self, 
-            env: gym.Env,
-            learning_rate: float, 
-            initial_epsilon: float, 
-            epsilon_decay: float,
-            final_epsilon: float, 
-            gamma: float =  0.99,
-    ):
-        self.env = env
-        self.q_values = defaultdict(lambda: np.zeros(env.action_space.n))
-
-        self.lr = learning_rate
-        self.gamma = gamma
-
-        # Pre-compute bins for speed
-        self.low = self.env.observation_space.low
-        self.high = self.env.observation_space.high
-        self.num_bins = 10
-        self.bin_edges = [np.linspace(self.low[i], self.high[i], self.num_bins + 1)[1:-1] for i in range(6)]
-
-        self.epsilon = initial_epsilon
-        self.epsilon_decay = epsilon_decay
-        self.final_epsilon = final_epsilon
-
-        self.training_error = []
-
-    def get_action(self, obs):
-        # Important: get_action should also use the binned state
-        state = self.bin_observation(obs)
-        if np.random.random() < self.epsilon:
-            return self.env.action_space.sample()
-        return int(np.argmax(self.q_values[state]))
+class RLAgent:
+    def __init__(self, obs_space, action_space, algo="q_learning", lr=0.01, num_bins=10):
+        self.algo = algo
+        self.action_space_n = action_space.n
+        self.lr = lr
+        self.gamma = 0.99
         
+        # Pre-allocate the Q-table
+        self.q_shape = tuple([num_bins + 1] * obs_space.shape[0] + [self.action_space_n])
+        self.q_values = np.zeros(self.q_shape, dtype=np.float32)
+
+        # Pre-compute bin edges
+        self.bin_edges = [
+            np.linspace(obs_space.low[i], obs_space.high[i], num_bins + 1)[1:-1] 
+            for i in range(obs_space.shape[0])
+        ]
+
     def bin_observation(self, obs):
-        # Faster binning using pre-computed edges
-        return tuple(int(np.digitize(obs[i], self.bin_edges[i])) for i in range(6))
-    
-    # def update(
-    #         self,
-    #         obs: tuple[float, float, float, float, float, float],
-    #         action: int,
-    #         reward: float,
-    #         terminated: bool, 
-    #         next_obs: tuple[float, float, float, float, float, float],
-    # ):
-    #     obs = self.bin_observation(obs)
-    #     next_obs = self.bin_observation(next_obs)
+        return tuple(int(np.digitize(obs[i], self.bin_edges[i])) for i in range(len(obs)))
+
+    def get_action(self, state, epsilon):
+        # Epsilon is passed dynamically now to handle online (decaying) vs offline (greedy = 0.0)
+        if np.random.random() < epsilon:
+            return np.random.randint(self.action_space_n)
+        return np.argmax(self.q_values[state])
+
+    def update(self, state, action, reward, terminated, next_state, next_action=None):
+        state_action = state + (action,)
+        current_q = self.q_values[state_action]
         
-    #     future_q_value = (not terminated) * np.max(self.q_values[next_obs])
-    #     target = reward + self.gamma * future_q_value
+        if terminated:
+            future_q = 0.0
+        else:
+            if self.algo == "q_learning":
+                # Off-policy: assumes greedy action for the next state
+                future_q = np.max(self.q_values[next_state])
+            elif self.algo == "sarsa":
+                # On-policy: uses the actual next action taken
+                future_q = self.q_values[next_state + (next_action,)]
+        
+        self.q_values[state_action] = current_q + self.lr * (reward + self.gamma * future_q - current_q)
 
-    #     temporal_difference = target - self.q_values[obs][action]
 
-    #     self.q_values[obs][action] = self.q_values[obs][action] + self.lr * temporal_difference
-
-    #     self.training_error.append(temporal_difference)
-
-    # Q-Learning Update
-    def update_q(self, state, action, reward, terminated, next_state):
-
-        future_q = (not terminated) * np.max(self.q_values[next_state])
-        td_error = (reward + self.gamma * future_q) - self.q_values[state][action]
-        self.q_values[state][action] += self.lr * td_error
-
-    # SARSA Update
-    def update_sarsa(self, state, action, reward, terminated, next_state, next_action):
-
-        future_q = (not terminated) * self.q_values[next_state][next_action]
-        td_error = (reward + self.gamma * future_q) - self.q_values[state][action]
-        self.q_values[state][action] += self.lr * td_error
-
+def run_experiment(params):
+    algo, seed = params
     
-    def decay_epsilon(self):
-        self.epsilon = max(self.final_epsilon, self.epsilon * self.epsilon_decay)
-
-
-def train_and_get_returns(algo="q_learning"):
-    env = gym.make('Acrobot-v1')
-    learning_rate = 0.01        # How fast to learn (higher = faster but less stable)
-    n_episodes = 50000        # Number of hands to practice
-    start_epsilon = 0.2        # Start with 100% random actions
-    final_epsilon = 0.1         # Always keep some exploration
-    epsilon_decay = np.exp(np.log(final_epsilon / start_epsilon) / n_episodes)
-
-    agent = AcrobatAgent(env, learning_rate, start_epsilon, epsilon_decay, final_epsilon)
-    episode_returns = []
-
-    for episode in tqdm(range(n_episodes), desc=f"Training {algo}"):
-        obs, info = env.reset()
+    # Initialize env with specific seed for reproducibility
+    env = gym.make("Acrobot-v1")
+    agent = RLAgent(env.observation_space, env.action_space, algo=algo, lr=0.01)
+    
+    # Epsilon parameters
+    epsilon = 1.0
+    epsilon_decay = 0.99  # Adjust if it learns too fast/slow
+    min_epsilon = 0.1
+    
+    # Phase 1: Online Performance (Learning)
+    online_episodes = 50000
+    online_returns = np.zeros(online_episodes, dtype=np.float32)
+    
+    for episode in range(online_episodes):
+        obs, _ = env.reset(seed=seed + episode)
         state = agent.bin_observation(obs)
-        action = agent.get_action(obs)
+        action = agent.get_action(state, epsilon)
         
-        total_reward = 0
+        total_reward = 0.0
         done = False
         
         while not done:
-            next_obs, reward, terminated, truncated, info = env.step(action)
+            next_obs, reward, terminated, truncated, _ = env.step(action)
             next_state = agent.bin_observation(next_obs)
-            next_action = agent.get_action(next_obs)
             
-            if algo == "q_learning":
-                agent.update_q(state, action, reward, terminated, next_state)
-            else:
-                agent.update_sarsa(state, action, reward, terminated, next_state, next_action)
+            # SARSA needs the next action before the update
+            next_action = agent.get_action(next_state, epsilon)
+            
+            # Update Q-table
+            agent.update(state, action, reward, terminated, next_state, next_action)
             
             total_reward += reward
-            state, action = next_state, next_action
+            state = next_state
+            action = next_action  # Move to the next action
             done = terminated or truncated
             
-        episode_returns.append(total_reward)
-        agent.decay_epsilon()
+        # Decay epsilon to a minimum of 0.1
+        epsilon = max(min_epsilon, epsilon * epsilon_decay)
+        online_returns[episode] = total_reward
+
+    # Phase 2: Offline Performance (Evaluation without exploration)
+    offline_episodes = 100
+    offline_returns = np.zeros(offline_episodes, dtype=np.float32)
+    eval_epsilon = 0.0  # Fully greedy policy
+    
+    for episode in range(offline_episodes):
+        obs, _ = env.reset(seed=seed + 10000 + episode)
+        state = agent.bin_observation(obs)
+        done = False
+        total_reward = 0.0
         
-    return episode_returns
+        while not done:
+            action = agent.get_action(state, eval_epsilon)
+            next_obs, reward, terminated, truncated, _ = env.step(action)
+            
+            total_reward += reward
+            state = agent.bin_observation(next_obs)
+            done = terminated or truncated
+            
+        offline_returns[episode] = total_reward
+        
+    env.close()
+    
+    return {
+        "algo": algo, 
+        "seed": seed, 
+        "online_returns": online_returns, 
+        "offline_mean": np.mean(offline_returns)
+    }
 
 if __name__ == "__main__":
-    with multiprocessing.Pool(processes=2) as pool:
-            # map() runs the function with different arguments in parallel
-            # Note: we pass the arguments as a list
-            results = pool.map(train_and_get_returns, ["q_learning", "sarsa"])
+    algorithms = ["q_learning", "sarsa"]
+    seeds = [42, 101, 2024] # Running a few seeds to get an average performance
+    grid = [(algo, seed) for algo in algorithms for seed in seeds]
+    
+    results = []
+    print("Running Online Training & Offline Evaluation for Q-Learning and SARSA...")
+    
+    max_workers = min(16, os.cpu_count() or 1)
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(run_experiment, p) for p in grid]
+        for future in tqdm(as_completed(futures), total=len(grid)):
+            results.append(future.result())
 
-    # 2. Unpack the results
-    q_returns, sarsa_returns = results
-    import matplotlib.pyplot as plt
+    # Process Data
+    df_results = pd.DataFrame(results)
+    
+    # 1. Compare Offline Performance
+    print("\n--- Offline Performance (Greedy Policy, Epsilon=0) ---")
+    offline_summary = df_results.groupby("algo")["offline_mean"].agg(['mean', 'std']).reset_index()
+    print(offline_summary.to_string(index=False))
+    
+    # 2. Plot Online Performance
+    print("\nPlotting Online Performance...")
+    plt.figure(figsize=(10, 6))
+    
+    for algo in algorithms:
+        # Get all online returns for this algorithm across all seeds
+        algo_data = df_results[df_results["algo"] == algo]["online_returns"].values
+        # Stack and calculate the mean across seeds
+        mean_returns = np.mean(np.vstack(algo_data), axis=0)
+        
+        # Calculate a rolling average for a smoother plot
+        rolling_mean = pd.Series(mean_returns).rolling(window=1000, min_periods=1).mean()
+        
+        plt.plot(rolling_mean, label=f"{algo.upper()} (Rolling Mean)")
 
-    def moving_average(data, window=500):
-        return np.convolve(data, np.ones(window)/window, mode='valid')
+    
 
-    import pandas as pd
-    df = pd.DataFrame({
-        "episode": np.arange(len(q_returns)),
-        "q_learning": q_returns,
-        "sarsa": sarsa_returns
-    })
-    df.to_csv("acrobot_results_100k_exponential_decay.csv", index=False)
-
-    plt.figure(figsize=(12, 6))
-
-    # Plot smoothed lines
-    plt.plot(moving_average(q_returns), label="Q-Learning", linewidth=2)
-    plt.plot(moving_average(sarsa_returns), label="SARSA", linewidth=2)
-
-
-    plt.title("Acrobot-v1: Q-Learning vs SARSA Returns")
+    plt.title("Online Performance: Q-Learning vs SARSA")
     plt.xlabel("Episode")
-    plt.ylabel("Total Reward (Return)")
-    # plt.axhline(y=-100, color='r', linestyle='--', label='Target Performance') # Example goal threshold
+    plt.ylabel("Reward (50-Episode Rolling Avg)")
     plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig("acrobot_comparison_100k_exponential_decay.png", dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.grid(True)
+    
+    # Save the plot and data
+    output_dir = os.path.join("Assignment 1", "Question 2", "SARSA_Q_Learning_Comparison")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    plt.savefig(os.path.join(output_dir, "online_performance_comparison.png"))
+    df_results.drop(columns=['online_returns']).to_csv(os.path.join(output_dir, "offline_comparison_summary.csv"), index=False)
+    print(f"Plot and summary saved to {output_dir}")

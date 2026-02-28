@@ -86,7 +86,7 @@ def train_worker(params):
     return {"lr": lr, "eps": eps, "score": np.mean(episode_returns[-100:])}
 
 if __name__ == "__main__":
-    lrs = [0.01, 0.1, 0.2, 0.5]
+    lrs = [0.01, 0.05, 0.1, 0.2]
     eps_values = [0.5, 0.8, 1.0]
     
     # Strictly grid search over lr and constant eps

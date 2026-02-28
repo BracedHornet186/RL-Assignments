@@ -3,6 +3,7 @@ import numpy as np
 import gymnasium as gym
 import pandas as pd
 from tqdm import tqdm
+from itertools import product
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 class AcrobotAgent:
@@ -45,9 +46,9 @@ class AcrobotAgent:
         self.epsilon = max(self.final_epsilon, self.epsilon * self.epsilon_decay)
 
 
-def train_worker(decay):
-    # Hardcoded hyperparams as requested
-    lr = 0.01
+def train_worker(params):
+    lr, decay = params  # Unpack the learning rate and decay rate
+
     start_eps = 1.0
     final_eps = 0.1
     
@@ -55,7 +56,7 @@ def train_worker(decay):
     env = gym.make("Acrobot-v1")
     agent = AcrobotAgent(env.observation_space, env.action_space, lr, start_eps, decay, final_eps)
 
-    num_episodes = 50000
+    num_episodes = 10000
     episode_returns = np.zeros(num_episodes, dtype=np.float32)
     for episode in range(num_episodes):
         obs, _ = env.reset()
@@ -80,28 +81,30 @@ def train_worker(decay):
     env.close()
     
     # Save individual raw data file safely
-    output_folder = os.path.join("Assignment 1", "Question 2", "q_learning_grid_search_data")
+    output_folder = os.path.join("Assignment 1", "Question 2", "q_learning_decay_search_data")
     os.makedirs(output_folder, exist_ok=True)
     
-    # Filename reflects the decay rate
-    file_path = os.path.join(output_folder, f"raw_decay_{decay}.csv")
+    file_path = os.path.join(output_folder, f"raw_lr_{lr}_decay_{decay}.csv")
     pd.DataFrame({"episode": range(num_episodes), "reward": episode_returns}).to_csv(file_path, index=False)
     
-    return {"decay": decay, "score": np.mean(episode_returns[-100:])}
+    return {"lr": lr, "decay": decay, "score": np.mean(episode_returns[-100:])}
 
 
 if __name__ == "__main__":
-    # Standard decay rates to test
+    # Standard parameters to test
+    lrs = [0.01, 0.05, 0.1, 0.2]
     decays = [0.9, 0.95, 0.99, 0.995, 0.999]
+
+    grid = list(product(lrs, decays))
     results = []
     
-    print(f"Starting grid search over {len(decays)} decay rates...")
+    print(f"Starting grid search over {len(grid)} combinations...")
     
     max_workers = min(16, os.cpu_count() or 1)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(train_worker, decay) for decay in decays]
+        futures = [executor.submit(train_worker, params) for params in grid]
         
-        for future in tqdm(as_completed(futures), total=len(decays), desc="Training Agents"):
+        for future in tqdm(as_completed(futures), total=len(grid), desc="Training Agents"):
             results.append(future.result())
     
     # Summarize results
@@ -111,13 +114,12 @@ if __name__ == "__main__":
     summary_dir = os.path.join("Assignment 1", "Question 2")
     os.makedirs(summary_dir, exist_ok=True)
     
-    # Saved with a unique name so it doesn't overwrite your previous lr/eps summary
     summary_path = os.path.join(summary_dir, "q_learning_decay_summary.csv")
     
     # Save the summary to CSV
     df_results.to_csv(summary_path, index=False)
-    print(f"\nFull decay search results saved to: {summary_path}")
+    print(f"\nFull grid search results saved to: {summary_path}")
     
     # Output top 3 to terminal
-    print("\nTop 3 Decay Rates:")
+    print("\nTop 3 Combinations (LR & Decay):")
     print(df_results.head(3).to_string(index=False))
