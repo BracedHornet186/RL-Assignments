@@ -7,7 +7,7 @@ from tqdm import tqdm
 import os
 
 # Create the specific folder for the best runs
-output_folder = "q_learning_best"
+output_folder = os.path.join("Assignment 1", "Question 2", "q_learning_best")
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 
