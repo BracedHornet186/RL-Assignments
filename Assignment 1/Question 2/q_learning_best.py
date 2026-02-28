@@ -57,7 +57,7 @@ def train_worker(seed):
     # --- FIXED HYPERPARAMETERS ---
     lr = 0.05
     start_eps = 1.0
-    n_episodes = 50000 
+    n_episodes = 100000 
     exp_decay_rate = 0.99 
     final_eps = 0.1
     
