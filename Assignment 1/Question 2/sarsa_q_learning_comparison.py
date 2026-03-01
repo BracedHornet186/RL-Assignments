@@ -54,11 +54,11 @@ def run_experiment(params):
     
     # Initialize env with specific seed for reproducibility
     env = gym.make("Acrobot-v1")
-    agent = RLAgent(env.observation_space, env.action_space, algo=algo, lr=0.01)
+    agent = RLAgent(env.observation_space, env.action_space, algo=algo, lr=0.1)
     
     # Epsilon parameters
     epsilon = 1.0
-    epsilon_decay = 0.99  # Adjust if it learns too fast/slow
+    epsilon_decay = 0.9  # Adjust if it learns too fast/slow
     min_epsilon = 0.1
     
     # Phase 1: Online Performance (Learning)
@@ -150,20 +150,41 @@ if __name__ == "__main__":
     
     for algo in algorithms:
         # Get all online returns for this algorithm across all seeds
-        algo_data = df_results[df_results["algo"] == algo]["online_returns"].values
-        # Stack and calculate the mean across seeds
-        mean_returns = np.mean(np.vstack(algo_data), axis=0)
+        # Stack into a 2D numpy array of shape (num_seeds, num_episodes)
+        algo_data = np.vstack(df_results[df_results["algo"] == algo]["online_returns"].values)
         
-        # Calculate a rolling average for a smoother plot
-        rolling_mean = pd.Series(mean_returns).rolling(window=1000, min_periods=1).mean()
+        # Apply the rolling average to EACH seed individually for accurate variance
+        window_size = 1000
+        smoothed_data = np.apply_along_axis(
+            lambda x: pd.Series(x).rolling(window=window_size, min_periods=1).mean().values, 
+            axis=1, 
+            arr=algo_data
+        )
         
-        plt.plot(rolling_mean, label=f"{algo.upper()} (Rolling Mean)")
-
-    
+        # Calculate the mean and standard deviation across the seeds (axis=0)
+        mean_returns = np.mean(smoothed_data, axis=0)
+        std_returns = np.std(smoothed_data, axis=0)
+        
+        # Create the x-axis values (episodes)
+        episodes = np.arange(len(mean_returns))
+        
+        # Plot the mean line and capture the color used
+        line, = plt.plot(episodes, mean_returns, label=f"{algo.upper()} (Mean)")
+        
+        # Plot the shaded region for +/- 1 standard deviation using the same color
+        plt.fill_between(
+            episodes, 
+            mean_returns - std_returns, 
+            mean_returns + std_returns, 
+            color=line.get_color(), 
+            alpha=0.2, # 20% opacity for the shading
+            label=f"{algo.upper()} ($\pm 1$ Std Dev)"
+        )
 
     plt.title("Online Performance: Q-Learning vs SARSA")
     plt.xlabel("Episode")
-    plt.ylabel("Reward (50-Episode Rolling Avg)")
+    # Updated label to reflect the 1000-episode window you set in the code
+    plt.ylabel(f"Reward ({window_size}-Episode Rolling Avg)") 
     plt.legend()
     plt.grid(True)
     

@@ -123,5 +123,5 @@ if __name__ == "__main__":
     
     print("\n--- TOP 3 SARSA HYPERPARAMETER SETTINGS ---")
     print(top_three)
-    
-    df_tuning.to_csv(os.path.join(output_folder, "sarsa_grid_search_summary.csv"), index=False)
+    summary_path = os.path.join("Assignment 1", "Question 2", "sarsa_grid_search_summary.csv")
+    df_tuning.to_csv(summary_path, index=False)
