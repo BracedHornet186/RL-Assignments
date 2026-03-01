@@ -11,13 +11,13 @@ def plot_comparison_results(folders, labels, colors, window_size=1000):
     for folder_path, label, color in zip(folders, labels, colors):
         if not os.path.exists(folder_path):
             print(f"Warning: Folder '{folder_path}' does not exist. Skipping...")
-            continue
+            return
             
         files = [f for f in os.listdir(folder_path) if f.startswith("run_seed_") and f.endswith(".csv")]
         
         if not files:
             print(f"No valid CSV files found in {folder_path}. Skipping...")
-            continue
+            return
 
         all_runs = []
 
@@ -57,13 +57,15 @@ def plot_comparison_results(folders, labels, colors, window_size=1000):
     plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    output_filename = "q_learning_vs_sarsa_plot.png"
+    output_filename = os.path.join("Assignment 1", "Question 2", "q_learning_vs_sarsa_plot.png")
     plt.savefig(output_filename, dpi=500)
     print(f"Plot successfully saved as {output_filename}")
 
 if __name__ == "__main__":
     # Define the inputs for the comparison
-    target_folders = ["q_learning_best", "sarsa_best"]
+    q_learning_folder = os.path.join("Assignment 1", "Question 2", "q_learning_best")
+    sarsa_folder = os.path.join("Assignment 1", "Question 2", "sarsa_best")
+    target_folders = [q_learning_folder, sarsa_folder]
     plot_labels = ["Q-Learning", "SARSA"]
     plot_colors = ["blue", "orange"]
     

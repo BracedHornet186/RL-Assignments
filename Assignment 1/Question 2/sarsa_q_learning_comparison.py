@@ -7,7 +7,7 @@ from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 class RLAgent:
-    def __init__(self, obs_space, action_space, algo="q_learning", lr=0.01, num_bins=10):
+    def __init__(self, obs_space, action_space, algo="q_learning", lr=0.1, num_bins=10):
         self.algo = algo
         self.action_space_n = action_space.n
         self.lr = lr
