@@ -18,7 +18,6 @@ class AcrobatAgent:
         self.gamma = 0.99
         self.num_bins = num_bins
 
-        # PRE-ALLOCATED ARRAY: Fixes the CPU frequency stall
         shape = tuple([num_bins + 1] * 6 + [env.action_space.n])
         self.q_values = np.zeros(shape, dtype=np.float32)
 
@@ -106,8 +105,8 @@ def train_worker(args):
 
 if __name__ == "__main__":
     used_seed = 42
-    eta_values = [0.5, 1, 2]
-    colors = {0.5: 'blue', 1: 'green', 2: 'red'}
+    eta_values = [0.5, 1, 2, 5]
+    colors = {0.5: 'blue', 1: 'green', 2: 'red', 5: 'black'}
     
     # Package arguments for the worker pool
     tasks = [(used_seed, eta) for eta in eta_values]
