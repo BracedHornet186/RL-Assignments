@@ -5,7 +5,7 @@ Author: Goving S Ashan(ME23B168) & Yash Purswani(ME22B214)
 This repository contains the solutions and experimental setups for Assignment 1. The assignment consists of various questions exploring Policy Iteration, Q-Learning, and SARSA algorithms across multiple configurations.
 
 ## Question 1
-- Contains the code for the **Policy Iteration** algorithm.
+- Contains the code for the **Value Iteration** algorithm.
 
 ## Question 2
 The experiments and grid searches are structured as follows:
@@ -51,8 +51,13 @@ The experiments and grid searches are structured as follows:
   - Exponential Decay Rate (`exp_decay_rate`): `0.9`
   - Number of Bins (`bins_list`): `[5, 10, 15, 20]`
 
-## Question 6
-- **File**: `q_learning_mod_reward_episode_length.py`
-- Contains the implementation for a modified reward function utilizing various values of η (`eta`).
-- Trained for **100,000 episodes** using:
-  - `eta_values = [0.5, 1, 2]`
+## Question 6: 
+This experiment investigates how modified reward functions and the scaling factor $\eta$ influence the convergence rate of a Q-Learning agent.
+
+* **Scripts**: `q_episode_vs_length.py`, `q_learning_mod_reward_episode_length.py`
+* **Training Episodes**: 100,000 per configuration
+* **Deterministic Seed**: 42
+* **Comparison Groups**:
+    * **Baseline**: Q-Learning using the standard environment reward function
+    * **Modified Reward**: Q-Learning utilizing a shaped reward function across various $\eta$ values: `{0.5, 1, 2, 5}`
+* **Primary Metric**: Evolution of **Episode Length** over time to measure the speed and stability of policy convergence
