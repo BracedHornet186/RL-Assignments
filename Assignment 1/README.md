@@ -34,7 +34,7 @@ The experiments and grid searches are structured as follows:
 - The optimal parameters found were then run with **10 seeds** across **100,000 episodes** using:
   - `sarsa_best.py`
   - `q_learning_best.py`
-- Plotting and comparison of these results are handled by `spread_comparison_plot.py`.
+- Plotting and comparison of these results are handled by `spread_comparison_plot.py` and mean performances alongside standard deviations for both algorithms are compared.
 
 ## Question 3
 - **File**: `sarsa_q_learning_comparison.py`
@@ -64,3 +64,14 @@ This experiment investigates how modified reward functions and the scaling facto
     * **Baseline**: Q-Learning using the standard environment reward function
     * **Modified Reward**: Q-Learning utilizing a shaped reward function across various $\eta$ values: `{0.5, 1, 2, 5}`
 * **Primary Metric**: Evolution of **Episode Length** over time to measure the speed and stability of policy convergence
+
+## How to Run
+To run any of the scripts in this assignment:
+
+```bash
+cd Assignment\ 1
+pip install -r requirements.txt
+python3 <script.py>
+```
+
+Replace `<script.py>` with the desired script filename (e.g., `q_learning_best.py`, `sarsa_best.py`, etc.).
