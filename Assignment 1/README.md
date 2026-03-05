@@ -14,17 +14,20 @@ The experiments and grid searches are structured as follows:
 - **Q-Learning**: Grid search over 50,000 episodes using:
   - Learning Rates (`lrs`): `[0.01, 0.05, 0.1, 0.2]`
   - Epsilon Values (`eps_values`): `[0.5, 0.8, 1.0]`
+  - `q_learning_grid_search.py`
 - **SARSA**: Grid search over 50,000 episodes using:
   - Learning Rates (`lrs`): `[0.01, 0.05, 0.1]`
   - Epsilon Values (`eps_values`): `[0.3, 0.5, 0.8, 1.0]`
-
+  - `sarsa_grid_search.py`
 ### Part 2.b
-- **Q-Learning**: Search using:
+- **Q-Learning**: Grid search over 50,000 episodes using:
   - Learning Rates (`lrs`): `[0.01, 0.05, 0.1, 0.2]`
   - Decay Rates (`decays`): `[0.9, 0.95, 0.99, 0.995, 0.999]`
-- **SARSA**: Search using:
+  - `q_learning_decay_search.py`
+- **SARSA**: Grid search over 50,000 episodes using:
   - Learning Rates (`lrs`): `[0.005, 0.01, 0.05, 0.1]`
   - Decay Rates (`decays`): `[0.9, 0.95, 0.99, 0.995, 0.999]`
+  - `sarsa_decay_search.py`
 
 ### Additional Details
 - Data points from these grid searches and experiment iterations are saved in their respective directories.
