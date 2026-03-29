@@ -214,51 +214,103 @@ def _train_worker(cfg: dict, seed: int, device_str: str, result_queue):
         hidden=cfg["hidden"], device=device,
     )
 
-    ep_returns, ep_timesteps = [], []
-    ep_ret = 0.0
+    ep_returns, ep_timesteps, ep_lengths, ep_epsilons = [], [], [], []
+    ep_ret    = 0.0
+    ep_len    = 0
     t0 = time.time()
 
-    with tqdm(range(1, cfg["total_timesteps"] + 1),
-          desc=f"seed {seed:>2} [{device_str}]",
-          unit="ts", dynamic_ncols=True, leave=True) as pbar:
+    # ── Weight save paths ─────────────────────────────────────
+    os.makedirs(cfg["log_dir"], exist_ok=True)
+    tag       = (cfg.get("run_tag") or
+                 f"trunc{cfg['truncation']}_rho{cfg['replay_factor']}_seed{seed}")
+    ckpt_dir  = os.path.join(cfg["log_dir"], "weights")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    best_ckpt = os.path.join(ckpt_dir, f"{tag}_best.pt")
+    final_ckpt= os.path.join(ckpt_dir, f"{tag}_final.pt")
+
+    best_avg20 = -float("inf")
+
+    with tqdm(
+        range(1, cfg["total_timesteps"] + 1),
+        desc=f"seed {seed:>2} [{device_str}]",
+        unit="ts",
+        dynamic_ncols=True,
+        leave=True,
+    ) as pbar:
         for t in pbar:
-            action = agent.act(obs)
+            action                                     = agent.act(obs)
             next_obs, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
 
+            # Only pass `terminated` (goal reached) as done-flag,
+            # NOT `truncated` — so bootstrapping is not cut off on timeout.
             agent.observe(obs, action, reward, next_obs, terminated)
+
             ep_ret += reward
-            obs = next_obs
+            ep_len += 1
+            obs     = next_obs
 
             if done:
                 ep_returns.append(ep_ret)
                 ep_timesteps.append(t)
+                ep_lengths.append(ep_len)
+                ep_epsilons.append(agent.epsilon)
                 obs, _ = env.reset()
                 ep_ret = 0.0
+                ep_len = 0
+
+                # ── Save best weights (based on rolling avg20) ─
+                if len(ep_returns) >= 20:
+                    avg20 = float(np.mean(ep_returns[-20:]))
+                    if avg20 > best_avg20:
+                        best_avg20 = avg20
+                        torch.save({
+                            "q_net"       : agent.q_net.state_dict(),
+                            "target_net"  : agent.target_net.state_dict(),
+                            "optimizer"   : agent.optimizer.state_dict(),
+                            "total_steps" : agent.total_steps,
+                            "episode"     : len(ep_returns),
+                            "avg20"       : avg20,
+                            "seed"        : seed,
+                        }, best_ckpt)
+
                 pbar.set_postfix(
-                    ep=len(ep_returns),
-                    ret=f"{ep_returns[-1]:.0f}",
-                    avg20=f"{np.mean(ep_returns[-20:]):.0f}",
-                    eps=f"{agent.epsilon:.2f}",
+                    ep    = len(ep_returns),
+                    ret   = f"{ep_returns[-1]:.0f}",
+                    avg20 = f"{np.mean(ep_returns[-20:]):.0f}",
+                    eps   = f"{agent.epsilon:.2f}",
                 )
 
+    env.close()
+
+    # ── Save final weights ────────────────────────────────────
+    torch.save({
+        "q_net"       : agent.q_net.state_dict(),
+        "target_net"  : agent.target_net.state_dict(),
+        "optimizer"   : agent.optimizer.state_dict(),
+        "total_steps" : agent.total_steps,
+        "episode"     : len(ep_returns),
+        "seed"        : seed,
+    }, final_ckpt)
+
     # ── Save CSV ──────────────────────────────────────────────
-    os.makedirs(cfg["log_dir"], exist_ok=True)
-    tag      = (cfg.get("run_tag") or
-                f"trunc{cfg['truncation']}_rho{cfg['replay_factor']}_seed{seed}")
     csv_path = os.path.join(cfg["log_dir"], f"{tag}.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["episode", "timestep", "return"])
-        for i, (ret, ts) in enumerate(zip(ep_returns, ep_timesteps)):
-            w.writerow([i + 1, ts, ret])
+        w.writerow(["episode", "timestep", "return", "ep_length", "epsilon"])
+        for i, (ret, ts, eplen, eps) in enumerate(
+            zip(ep_returns, ep_timesteps, ep_lengths, ep_epsilons)
+        ):
+            w.writerow([i + 1, ts, ret, eplen, eps])
 
     summary = dict(
-        seed     = seed,
-        episodes = len(ep_returns),
-        best     = max(ep_returns) if ep_returns else float("nan"),
-        last20   = float(np.mean(ep_returns[-20:])) if len(ep_returns) >= 20 else float("nan"),
-        elapsed  = time.time() - t0,
+        seed       = seed,
+        episodes   = len(ep_returns),
+        best       = max(ep_returns) if ep_returns else float("nan"),
+        last20     = float(np.mean(ep_returns[-20:])) if len(ep_returns) >= 20 else float("nan"),
+        elapsed    = time.time() - t0,
+        best_ckpt  = best_ckpt,
+        final_ckpt = final_ckpt,
     )
     result_queue.put(summary)
 
@@ -368,8 +420,8 @@ def parse_args():
         description="Parallel Vanilla DQN — MountainCar-v0",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--seeds",           type=int, nargs="+", default=[8, 9, 10, 11, 12, 13, 14, 15])
-    p.add_argument("--workers",         type=int, default=8,
+    p.add_argument("--seeds",           type=int, nargs="+", default=list(range(15)))
+    p.add_argument("--workers",         type=int, default=4,
                    help="Max parallel subprocesses. Use 1 for serial (debug).")
     p.add_argument("--total_timesteps", type=int, default=200_000)
     p.add_argument("--truncation",      type=int, default=2000)
