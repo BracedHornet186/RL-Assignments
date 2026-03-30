@@ -9,7 +9,7 @@ from multiprocessing import Pool, cpu_count
 from tqdm import tqdm
 import pandas as pd
 import os
-
+torch.set_default_dtype(torch.float)
 # =====================
 # SYSTEM SETTINGS
 # =====================
@@ -22,7 +22,7 @@ DEVICE = torch.device("cpu")
 GAMMA = 0.99
 LR = 5e-4
 BUFFER_SIZE = 100000
-
+TRAIN_FREQ = 4
 EPS_START = 1.0
 EPS_END = 0.05
 EPS_DECAY_STEPS = 100000
@@ -30,10 +30,11 @@ EPS_DECAY_STEPS = 100000
 HIDDEN_SIZES = [64, 64]
 
 NUM_EPISODES = 600
-MAX_STEPS = 1000
+MAX_STEPS = 2000
 
-NUM_ENVS = 8    # per worker (safe)
-NUM_SEEDS = 15  # per config
+NUM_ENVS = 4    
+NUM_WORKERS = 8
+NUM_SEEDS = 15  
 
 # =====================
 # REPLAY BUFFER (NUMPY)
@@ -44,11 +45,11 @@ class ReplayBuffer:
         self.ptr = 0
         self.full = False
 
-        self.s = np.zeros((size, state_dim), dtype=np.float32)
+        self.s = np.zeros((size, state_dim), dtype=float)
         self.a = np.zeros(size, dtype=np.int64)
-        self.r = np.zeros(size, dtype=np.float32)
-        self.s_next = np.zeros((size, state_dim), dtype=np.float32)
-        self.d = np.zeros(size, dtype=np.float32)
+        self.r = np.zeros(size, dtype=float)
+        self.s_next = np.zeros((size, state_dim), dtype=float)
+        self.d = np.zeros(size, dtype=float)
 
     def push(self, s, a, r, s_next, d):
         n = len(s)
@@ -69,11 +70,11 @@ class ReplayBuffer:
         idx = np.random.randint(0, max_idx, size=batch_size)
 
         return (
-            torch.tensor(self.s[idx], dtype=torch.float32),
-            torch.tensor(self.a[idx]),
-            torch.tensor(self.r[idx], dtype=torch.float32),
-            torch.tensor(self.s_next[idx], dtype=torch.float32),
-            torch.tensor(self.d[idx], dtype=torch.float32),
+            torch.from_numpy(self.s[idx]).float(),
+            torch.from_numpy(self.a[idx]).long(),
+            torch.from_numpy(self.r[idx]).float(),
+            torch.from_numpy(self.s_next[idx]).float(),
+            torch.from_numpy(self.d[idx]).float(),
         )
 
 # =====================
@@ -114,7 +115,7 @@ def train_single(config):
     torch.manual_seed(seed)
 
     env = gym.vector.SyncVectorEnv(
-        [make_env(seed + i) for i in range(NUM_ENVS)]
+        [make_env(seed * 1000 + i) for i in range(NUM_ENVS)]
     )
 
     state_dim = env.single_observation_space.shape[0]
@@ -143,7 +144,8 @@ def train_single(config):
                 actions = np.random.randint(0, action_dim, size=NUM_ENVS)
             else:
                 with torch.no_grad():
-                    q_vals = q_net(torch.tensor(obs, dtype=torch.float32))
+                    obs_tensor = torch.from_numpy(obs)
+                    q_vals = q_net(obs_tensor)
                     actions = torch.argmax(q_vals, dim=1).numpy()
 
             next_obs, rewards, terms, truncs, _ = env.step(actions)
@@ -156,7 +158,9 @@ def train_single(config):
             total_steps += 1
 
             # training
-            if buffer.ptr > batch_size:
+            max_idx = buffer.size if buffer.full else buffer.ptr
+
+            if max_idx > batch_size and total_steps % TRAIN_FREQ == 0:
                 for _ in range(rho):
                     s, a, r, s_next, d = buffer.sample(batch_size)
 
@@ -212,7 +216,7 @@ if __name__ == "__main__":
 
     results = []
 
-    with Pool(min(cpu_count(), 8)) as pool:
+    with Pool(min(cpu_count(), NUM_WORKERS)) as pool:
         for out in tqdm(pool.imap_unordered(train_single, jobs), total=len(jobs)):
             results.append(out)
 

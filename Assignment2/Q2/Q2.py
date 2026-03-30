@@ -11,6 +11,8 @@ from tqdm import tqdm
 import pandas as pd
 import time
 import os
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 # =====================
 # Hyperparameters
 # =====================
@@ -220,3 +222,4 @@ if __name__ == "__main__":
     plt.grid(True)
     plt.savefig("dqn_mountaincar.png", dpi=300)
     plt.show()
+    print(f"\nTotal Time: {(time.time() - start)/60:.2f} minutes")
