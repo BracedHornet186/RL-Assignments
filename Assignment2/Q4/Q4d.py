@@ -19,7 +19,7 @@ torch.set_num_interop_threads(1)
 start = time.time()
 
 GAMMA = 0.99
-LR = 1e-3
+LR = 5e-4
 BUFFER_SIZE = 100000
 
 BATCH_SIZE = 64
