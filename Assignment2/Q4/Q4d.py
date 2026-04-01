@@ -5,24 +5,27 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from multiprocessing import Pool, cpu_count
+from collections import deque
+from multiprocessing import Pool
 from tqdm import tqdm
 import pandas as pd
+import time
 import os
-torch.set_default_dtype(torch.float)
-# =====================
-# SYSTEM SETTINGS
-# =====================
-
-DEVICE = torch.device("cpu")
-
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 # =====================
 # Hyperparameters
 # =====================
+start = time.time()
+
 GAMMA = 0.99
-LR = 5e-4
-BUFFER_SIZE = 100000
-TRAIN_FREQ = 4
+LR = 1e-3
+BUFFER_SIZE = 50000
+
+BATCH_SIZE = 64
+TARGET_UPDATE_FREQ = 500
+TRAIN_FREQ = 1
+
 EPS_START = 1.0
 EPS_END = 0.05
 EPS_DECAY_STEPS = 100000
@@ -31,54 +34,46 @@ HIDDEN_SIZES = [64, 64]
 
 NUM_EPISODES = 600
 MAX_STEPS = 2000
+NUM_SEEDS = 15
 
-NUM_ENVS = 4    
-NUM_WORKERS = 8
-NUM_SEEDS = 15  
+# Sensitivity values
+BATCH_SIZE_LIST = [16,32,64,128,256]
+TARGET_UPDATE_LIST = [125,250,500,1000,2000]
 
+RHO_VALUES = [1,4]
+
+DEVICE = torch.device("cpu")
+
+os.makedirs("results", exist_ok=True)
+torch.set_num_threads(1)
 # =====================
-# REPLAY BUFFER (NUMPY)
+# Replay Buffer
 # =====================
 class ReplayBuffer:
-    def __init__(self, size, state_dim):
-        self.size = size
-        self.ptr = 0
-        self.full = False
+    def __init__(self, size):
+        self.buffer = deque(maxlen=size)
 
-        self.s = np.zeros((size, state_dim), dtype=float)
-        self.a = np.zeros(size, dtype=np.int64)
-        self.r = np.zeros(size, dtype=float)
-        self.s_next = np.zeros((size, state_dim), dtype=float)
-        self.d = np.zeros(size, dtype=float)
+    def __len__(self):
+        return len(self.buffer)
 
-    def push(self, s, a, r, s_next, d):
-        n = len(s)
-        idx = (np.arange(n) + self.ptr) % self.size
-
-        self.s[idx] = s
-        self.a[idx] = a
-        self.r[idx] = r
-        self.s_next[idx] = s_next
-        self.d[idx] = d
-
-        self.ptr = (self.ptr + n) % self.size
-        if self.ptr == 0:
-            self.full = True
+    def push(self, transition):
+        self.buffer.append(transition)
 
     def sample(self, batch_size):
-        max_idx = self.size if self.full else self.ptr
-        idx = np.random.randint(0, max_idx, size=batch_size)
+        indices = np.random.randint(0, len(self.buffer), size=batch_size)
+        batch = [self.buffer[i] for i in indices]
+        s, a, r, s_next, done = zip(*batch)
 
         return (
-            torch.from_numpy(self.s[idx]).float(),
-            torch.from_numpy(self.a[idx]).long(),
-            torch.from_numpy(self.r[idx]).float(),
-            torch.from_numpy(self.s_next[idx]).float(),
-            torch.from_numpy(self.d[idx]).float(),
+            torch.stack(s).to(DEVICE),
+            torch.tensor(a, dtype=torch.long).to(DEVICE),
+            torch.tensor(r, dtype=torch.float32).to(DEVICE),
+            torch.stack(s_next).to(DEVICE),
+            torch.tensor(done, dtype=torch.float32).to(DEVICE),
         )
 
 # =====================
-# Q NETWORK
+# Q-Network
 # =====================
 class QNetwork(nn.Module):
     def __init__(self, state_dim, action_dim):
@@ -86,229 +81,214 @@ class QNetwork(nn.Module):
         layers = []
         prev = state_dim
         for h in HIDDEN_SIZES:
-            layers += [nn.Linear(prev, h), nn.ReLU()]
+            layers.append(nn.Linear(prev, h))
+            layers.append(nn.ReLU())
             prev = h
         layers.append(nn.Linear(prev, action_dim))
         self.net = nn.Sequential(*layers)
+        self.apply(self.kaiming_init)
+
+    def kaiming_init(self, m):
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')
+            nn.init.zeros_(m.bias)
 
     def forward(self, x):
         return self.net(x)
 
 # =====================
-# ENV CREATION
+# Train Function
 # =====================
-def make_env(seed):
-    def _init():
-        env = gym.make("MountainCar-v0", max_episode_steps=MAX_STEPS)
-        env.reset(seed=seed)
-        return env
-    return _init
-
-# =====================
-# TRAIN FUNCTION (PER SEED)
-# =====================
-def train_single(config):
-    seed, rho, batch_size, target_update_freq = config
+def train_dqn(args):
+    seed, rho, batch_size, target_update_freq = args
 
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = gym.vector.SyncVectorEnv(
-        [make_env(seed * 1000 + i) for i in range(NUM_ENVS)]
-    )
+    env = gym.make("MountainCar-v0", max_episode_steps=MAX_STEPS)
 
-    state_dim = env.single_observation_space.shape[0]
-    action_dim = env.single_action_space.n
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.n
 
-    q_net = QNetwork(state_dim, action_dim)
-    target_net = QNetwork(state_dim, action_dim)
+    q_net = QNetwork(state_dim, action_dim).to(DEVICE)
+    target_net = QNetwork(state_dim, action_dim).to(DEVICE)
     target_net.load_state_dict(q_net.state_dict())
 
     optimizer = optim.Adam(q_net.parameters(), lr=LR)
-    buffer = ReplayBuffer(BUFFER_SIZE, state_dim)
+    buffer = ReplayBuffer(BUFFER_SIZE)
 
     total_steps = 0
-    returns = []
-
-    obs, _ = env.reset()
-    episode_rewards = np.zeros(NUM_ENVS)
+    episode_returns = []
 
     for ep in range(NUM_EPISODES):
+        state, _ = env.reset(seed=seed + ep)
+        ep_reward = 0
 
-        for _ in range(MAX_STEPS):
-
+        for t in range(MAX_STEPS):
             epsilon = max(EPS_END, EPS_START - total_steps / EPS_DECAY_STEPS)
 
             if random.random() < epsilon:
-                actions = np.random.randint(0, action_dim, size=NUM_ENVS)
+                action = env.action_space.sample()
             else:
                 with torch.no_grad():
-                    obs_tensor = torch.from_numpy(obs)
-                    q_vals = q_net(obs_tensor)
-                    actions = torch.argmax(q_vals, dim=1).numpy()
+                    state_t = torch.from_numpy(state).float().unsqueeze(0).to(DEVICE)
+                    action = torch.argmax(q_net(state_t)).item()
 
-            next_obs, rewards, terms, truncs, _ = env.step(actions)
-            dones = terms | truncs
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            done = terminated
 
-            buffer.push(obs, actions, rewards, next_obs, dones)
+            buffer.push((
+                torch.tensor(state, dtype=torch.float32),
+                action,
+                reward,
+                torch.tensor(next_state, dtype=torch.float32),
+                done
+            ))
 
-            obs = next_obs
-            episode_rewards += rewards
+            state = next_state
+            ep_reward += reward
             total_steps += 1
 
-            # training
-            max_idx = buffer.size if buffer.full else buffer.ptr
-
-            if max_idx > batch_size and total_steps % TRAIN_FREQ == 0:
+            # Training
+            if len(buffer) > batch_size and total_steps % TRAIN_FREQ == 0:
                 for _ in range(rho):
                     s, a, r, s_next, d = buffer.sample(batch_size)
 
-                    q = q_net(s).gather(1, a.unsqueeze(1)).squeeze()
+                    q_vals = q_net(s).gather(1, a.unsqueeze(1)).squeeze()
 
                     with torch.no_grad():
-                        max_next = target_net(s_next).max(1)[0]
-                        target = r + GAMMA * max_next * (1 - d)
+                        max_next_q = target_net(s_next).max(1)[0]
+                        target = r + GAMMA * max_next_q * (1 - d)
 
-                    loss = nn.SmoothL1Loss()(q, target)
+                    loss = nn.SmoothL1Loss()(q_vals, target)
 
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
 
+            # Target update
             if total_steps % target_update_freq == 0:
                 target_net.load_state_dict(q_net.state_dict())
 
-            # done handling
-            for i, done in enumerate(dones):
-                if done:
-                    returns.append(episode_rewards[i])
-                    episode_rewards[i] = 0
+            if terminated or truncated:
+                break
 
-        obs, _ = env.reset()
+        episode_returns.append(ep_reward)
 
     env.close()
-    return (rho, batch_size, target_update_freq, seed, returns)
+    return episode_returns
+
+# =====================
+# Utility
+# =====================
+def run_config(config_name, jobs):
+    print(f"\n===== RUNNING: {config_name} =====")
+
+    num_workers = min(6, NUM_SEEDS)
+
+    with Pool(num_workers) as pool:
+        results = list(tqdm(pool.imap(train_dqn, jobs), total=len(jobs)))
+
+    returns = np.array(results)
+
+    final_perf = returns[:, -100:].mean(axis=1)
+
+    mean = final_perf.mean()
+    std = final_perf.std()
+    ci = 1.96 * std / np.sqrt(NUM_SEEDS)
+
+    print(f"Finished {config_name} → Mean={mean:.2f}, CI={ci:.2f}")
+
+    return returns, mean, ci
 
 # =====================
 # MAIN
 # =====================
 if __name__ == "__main__":
 
-    os.makedirs("results_sensitivity", exist_ok=True)
+    ##############################
+    # BATCH SIZE SENSITIVITY
+    ##############################
+    batch_results = {rho: [] for rho in RHO_VALUES}
 
-    batch_sizes = [64, 128, 256, 512]
-    target_freqs = [250, 500, 1000, 2000]
-    rhos = [1, 4]
+    for rho in RHO_VALUES:
+        for bs in BATCH_SIZE_LIST:
+            config_name = f"BATCH | rho={rho} | bs={bs}"
 
-    jobs = []
+            jobs = [(seed, rho, bs, TARGET_UPDATE_FREQ) for seed in range(NUM_SEEDS)]
 
-    for rho in rhos:
-        for b in batch_sizes:
-            for seed in range(NUM_SEEDS):
-                jobs.append((seed, rho, b, 1000))
+            returns, mean, ci = run_config(config_name, jobs)
 
-        for t in target_freqs:
-            for seed in range(NUM_SEEDS):
-                jobs.append((seed, rho, 256, t))
+            batch_results[rho].append((bs, mean, ci))
 
-    print(f"Total jobs: {len(jobs)}")
-
-    results = []
-
-    with Pool(min(cpu_count(), NUM_WORKERS)) as pool:
-        for out in tqdm(pool.imap_unordered(train_single, jobs), total=len(jobs)):
-            results.append(out)
-
-    # =====================
-    # ORGANIZE RESULTS
-    # =====================
-    results_dict = {}
-
-    for rho, b, t, seed, returns in results:
-        key = (rho, b, t)
-        if key not in results_dict:
-            results_dict[key] = []
-        results_dict[key].append(returns)
-
-    summary_rows = []
-
-    # =====================
-    # BATCH PLOT
-    # =====================
-    plt.figure(figsize=(8,6))
-
-    for rho in rhos:
-        means, cis = [], []
-
-        for b in batch_sizes:
-            arr = np.array(results_dict[(rho, b, 1000)])
-
-            pd.DataFrame(arr).to_csv(
-                f"results_sensitivity/all_returns_batch_rho{rho}_b{b}.csv",
-                index=False
+            pd.DataFrame(returns).to_csv(
+                f"results/batch_rho{rho}_bs{bs}.csv", index=False
             )
 
-            final_perf = arr[:, -50:].mean(axis=1)
+    ##############################
+    # TARGET UPDATE SENSITIVITY
+    ##############################
+    target_results = {rho: [] for rho in RHO_VALUES}
 
-            mean = final_perf.mean()
-            std = final_perf.std()
-            ci = 1.96 * std / np.sqrt(NUM_SEEDS)
+    for rho in RHO_VALUES:
+        for tu in TARGET_UPDATE_LIST:
+            config_name = f"TARGET | rho={rho} | tu={tu}"
 
-            means.append(mean)
-            cis.append(ci)
+            jobs = [(seed, rho, BATCH_SIZE, tu) for seed in range(NUM_SEEDS)]
 
-            summary_rows.append([rho, b, 1000, mean, std, ci])
+            returns, mean, ci = run_config(config_name, jobs)
 
-        plt.errorbar(batch_sizes, means, yerr=cis, label=f"rho={rho}", marker='o')
+            target_results[rho].append((tu, mean, ci))
 
-    plt.xscale('log')
-    plt.title("Sensitivity to Batch Size")
-    plt.legend()
-    plt.grid(True)
-    plt.savefig("results_sensitivity/sensitivity_batch.png", dpi=300)
-    plt.show()
-
-    # =====================
-    # TARGET PLOT
-    # =====================
-    plt.figure(figsize=(8,6))
-
-    for rho in rhos:
-        means, cis = [], []
-
-        for t in target_freqs:
-            arr = np.array(results_dict[(rho, 256, t)])
-
-            pd.DataFrame(arr).to_csv(
-                f"results_sensitivity/all_returns_target_rho{rho}_t{t}.csv",
-                index=False
+            pd.DataFrame(returns).to_csv(
+                f"results/target_rho{rho}_tu{tu}.csv", index=False
             )
 
-            final_perf = arr[:, -50:].mean(axis=1)
+    ##############################
+    # PLOT: BATCH SIZE
+    ##############################
+    plt.figure(figsize=(8,6))
 
-            mean = final_perf.mean()
-            std = final_perf.std()
-            ci = 1.96 * std / np.sqrt(NUM_SEEDS)
+    for rho in RHO_VALUES:
+        x = [v[0] for v in batch_results[rho]]
+        y = [v[1] for v in batch_results[rho]]
+        ci = [v[2] for v in batch_results[rho]]
 
-            means.append(mean)
-            cis.append(ci)
+        plt.errorbar(x, y, yerr=ci, marker='o', capsize=4, label=f"ρ = {rho}")
 
-            summary_rows.append([rho, 256, t, mean, std, ci])
-
-        plt.errorbar(target_freqs, means, yerr=cis, label=f"rho={rho}", marker='o')
-
-    plt.xscale('log')
-    plt.title("Sensitivity to Target Update Frequency")
+    plt.xscale("log")
+    plt.xticks(x, x)
+    plt.xlabel("Batch Size")
+    plt.ylabel("Performance (last 100 eps)")
+    plt.title("Sensitivity: Batch Size")
     plt.legend()
-    plt.grid(True)
-    plt.savefig("results_sensitivity/sensitivity_target.png", dpi=300)
+    plt.grid()
+
+    plt.savefig("results/sensitivity_batch.png", dpi=300)
     plt.show()
 
-    # =====================
-    # SAVE SUMMARY
-    # =====================
-    df = pd.DataFrame(summary_rows,
-        columns=["rho", "batch_size", "target_update_freq", "mean", "std", "ci"]
-    )
-    df.to_csv("results_sensitivity/summary_all.csv", index=False)
+    ##############################
+    # PLOT: TARGET UPDATE
+    ##############################
+    plt.figure(figsize=(8,6))
+
+    for rho in RHO_VALUES:
+        x = [v[0] for v in target_results[rho]]
+        y = [v[1] for v in target_results[rho]]
+        ci = [v[2] for v in target_results[rho]]
+
+        plt.errorbar(x, y, yerr=ci, marker='o', capsize=4, label=f"ρ = {rho}")
+
+    plt.xscale("log")
+    plt.xticks(x, x)
+    plt.xlabel("Target Update Frequency")
+    plt.ylabel("Performance (last 100 eps)")
+    plt.title("Sensitivity: Target Network")
+    plt.legend()
+    plt.grid()
+
+    plt.savefig("results/sensitivity_target.png", dpi=300)
+    plt.show()
+
+    print(f"\nTotal Time: {(time.time() - start)/60:.2f} minutes")
