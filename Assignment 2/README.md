@@ -11,9 +11,6 @@ This README gives the **correct commands** to run your experiments for:
 - Q4: `hyperparameter_senstivity.py`
 - Q5: `dqn_per.py` and `per_plot.py`
 
-> Some usage blocks inside scripts mention old/wrong filenames (for example `dqn_mountaincar.py`, `evaluate.py`, `plot_truncation.py`, `plot_rho_comparison.py`).
-> Use the commands in this README.
-
 ---
 
 ## Project Structure & Logs
