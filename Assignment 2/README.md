@@ -3,7 +3,7 @@
 ## Authors
 - Yash Purswani (ME22B214)
 - Govind S Ashan (ME23B168)
-- Abhinand T (ME23B208)
+- Tiramdas Abhinand (ME23B208)
 ---
 This README gives the **correct commands** to run your experiments for:
 - Q1: `vanilla_dqn_parallel.py` (+ rendering with `vanilla_dqn_eval.py`)
@@ -15,6 +15,17 @@ This README gives the **correct commands** to run your experiments for:
 > Use the commands in this README.
 
 ---
+
+## Project Structure & Logs
+
+The following directories are used to store training artifacts, metrics, and model weights:
+
+* **`logs/`**: Contains logs and final weights (of all 15 seeds) of models trained for different **truncation length** values with a fixed $\rho = 1$.
+* **`logs_uniform/`**: Contains logs and final weights (of all 15 seeds) of models trained on 4 different **$\rho$ values** (1, 2, 4, and 8) using Uniform Sampling.
+* **`logs_per/`**: Contains logs and final weights (of all 15 seeds) of models trained on 4 different **$\rho$ values** (1, 2, 4, and 8) using **Prioritized Experience Replay (PER)**.
+
+---
+
 
 ## Setup
 
