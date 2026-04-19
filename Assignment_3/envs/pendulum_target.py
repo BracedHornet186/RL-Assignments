@@ -3,7 +3,7 @@ import numpy as np
 
 class TargetPendulum(gym.Wrapper):
     def __init__(self, theta_target_deg):
-        env = gym.make("Pendulum-v1")
+        env = gym.make("Pendulum-v1", max_episode_steps=1000)
         super().__init__(env)
         self.theta_target = np.deg2rad(theta_target_deg)
 

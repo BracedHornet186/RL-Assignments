@@ -1,4 +1,5 @@
 import torch
+torch.set_num_threads(1)
 import numpy as np
 import csv
 import os
@@ -11,11 +12,9 @@ from utils.logger import Logger
 from envs.pendulum_target import TargetPendulum
 
 
-def train(theta, seed=0, total_steps=200_000):
+def train(theta, seed=0, total_steps=200_000, device=None):
     torch.manual_seed(seed)
     np.random.seed(seed)
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # --- ENV ---
     env = TargetPendulum(theta)
@@ -63,7 +62,7 @@ def train(theta, seed=0, total_steps=200_000):
     returns = []
 
     # --- tqdm ---
-    pbar = tqdm(range(1, total_steps + 1), desc=f"θ={theta}, seed={seed}", leave=False)
+    pbar = tqdm(range(1, total_steps + 1), desc=f"θ={theta}, seed={seed}", leave=False,disable=(seed != 0))
 
     for step in pbar:
 
