@@ -1,0 +1,6 @@
+gymnasium
+torch
+numpy
+matplotlib
+hydra-core
+tqdm
