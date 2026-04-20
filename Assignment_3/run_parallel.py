@@ -3,16 +3,16 @@ import torch.multiprocessing as mp
 import os
 from train import train
 
-
-def worker(theta, seed, device):
+torch.set_num_threads(1)
+def worker(theta, seed, device, show_pbar):
     print(f"[START] θ={theta}, seed={seed}, device={device}", flush=True)
-    train(theta=theta, seed=seed, device=device)
+    # Pass the show_pbar flag into train()
+    train(theta=theta, seed=seed, device=device, show_pbar=show_pbar,total_steps=120000)
     print(f"[DONE ] θ={theta}, seed={seed}", flush=True)
 
 
 def run_parallel(targets, seeds, max_workers=4):
     num_gpus = torch.cuda.device_count()
-
 
     mp.set_start_method("spawn", force=True)
 
@@ -28,8 +28,11 @@ def run_parallel(targets, seeds, max_workers=4):
         while job_list and len(active) < max_workers:
             theta, seed = job_list.pop(0)
             device = "cpu"
+            
+            # True for idx 0, 8, 16, etc... (Exactly one bar per batch!)
+            show_bar_for_this_worker = (idx % max_workers == 0)
 
-            p = mp.Process(target=worker, args=(theta, seed, device))
+            p = mp.Process(target=worker, args=(theta, seed, device, show_bar_for_this_worker))
             p.start()
 
             active.append(p)
@@ -40,9 +43,9 @@ def run_parallel(targets, seeds, max_workers=4):
 
     print("\nAll runs completed!")
 
-
 if __name__ == "__main__":
-    targets = [0, -10, 30, -60, 90, -90, 120, -150]
+    targets = [0,-10,30, -60, 90, -90, 120, -150]
+    #targets = [-10]
     seeds = list(range(15))
 
-    run_parallel(targets, seeds, max_workers=10)
+    run_parallel(targets, seeds, max_workers=8)

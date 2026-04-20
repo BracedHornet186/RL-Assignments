@@ -6,4 +6,4 @@ seeds = list(range(15))
 for theta in targets:
     for seed in seeds:
         print(f"\nRunning θ={theta}, seed={seed}", flush=True)
-        train(theta, seed)
+        train(theta, seed,device='cuda')
