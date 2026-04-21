@@ -66,7 +66,10 @@ def train(theta, seed=0, total_steps=100000, device=None, workers=None, show_pba
     returns = []
     
     best_return = -float('inf')
-    mode = "auto" if learnable_temperature else f"manual_a{init_temperature}"
+    if reward == 1:
+        mode = "auto" if learnable_temperature else f"manual_a{init_temperature}"
+    else:
+        mode = "auto" if learnable_temperature else f"manual_a{init_temperature}_rs{reward_scale}"
     if exp_name is None:
         exp_name = f"theta{theta}_seed{seed}_{mode}_rs{reward_scale}"
 
