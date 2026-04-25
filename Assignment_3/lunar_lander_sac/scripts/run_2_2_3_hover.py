@@ -1,6 +1,6 @@
 """
 Q2.2 Part 3
-Hover-reward LunarLander experiment.
+Hover-reward LunarLander experiment — runs seeds IN PARALLEL.
   - fixed alpha = 0.01
   - auto alpha
 Both trained on:
@@ -11,55 +11,43 @@ Both trained on:
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import json
 import numpy as np
 import torch
-import gymnasium as gym
 from pathlib import Path
-
-from agents.sac import SAC
-from envs.lunar_lander import HoverLunarLander, ChangingRewardLunarLander
-from utils.trainer import run_seeds
-from utils.plotting import plot_curves
 
 # ── Config ──────────────────────────────────────────────────────
 SEEDS        = list(range(15))
 TOTAL_STEPS  = 500_000
-SWITCH_STEP  = 250_000    # reward switches here
+SWITCH_STEP  = 250_000
 EVAL_EVERY   = 10_000
 EVAL_EPS     = 20
 RANDOM_STEPS = 10_000
 LOG_DIR      = "logs/q2_2_3_hover"
 DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
 
-
-def get_obs_action_dims():
-    env = gym.make("LunarLander-v3", continuous=True)
-    od = env.observation_space.shape[0]
-    ad = env.action_space.shape[0]
-    env.close()
-    return od, ad
-
-OBS_DIM, ACTION_DIM = get_obs_action_dims()
+# Hard-code dims to avoid importing gymnasium at module level
+# (gymnasium triggers OpenGL/CUDA init in every spawned subprocess)
+OBS_DIM    = 8
+ACTION_DIM = 2
 
 
 # ── Env factories ────────────────────────────────────────────────
 def make_changing_train_env(seed):
+    from envs.lunar_lander import ChangingRewardLunarLander
     env = ChangingRewardLunarLander(switch_step=SWITCH_STEP, continuous=True)
     env.reset(seed=seed)
+    _PROCESS_ENV[seed] = env
     return env
 
-def make_hover_eval_env_phase1():
-    """Evaluate in the +200 hover env."""
+def make_hover_eval_env():
+    from envs.lunar_lander import HoverLunarLander
     return HoverLunarLander(hover_bonus=200.0, continuous=True)
-
-def make_hover_eval_env_phase2():
-    """Evaluate in the -100 hover env (after switch)."""
-    return HoverLunarLander(hover_bonus=-100.0, continuous=True)
 
 
 # ── Agent factories ──────────────────────────────────────────────
 def make_fixed_alpha_agent(seed):
+    from agents.sac import SAC
     return SAC(
         obs_dim=OBS_DIM, action_dim=ACTION_DIM,
         lr=3e-4, gamma=0.99, tau=0.005,
@@ -70,6 +58,7 @@ def make_fixed_alpha_agent(seed):
     )
 
 def make_auto_alpha_agent(seed):
+    from agents.sac import SAC
     return SAC(
         obs_dim=OBS_DIM, action_dim=ACTION_DIM,
         lr=3e-4, gamma=0.99, tau=0.005,
@@ -80,73 +69,61 @@ def make_auto_alpha_agent(seed):
     )
 
 
-# ── Hook: update env's global step so reward switches ───────────
-def make_hook(train_env):
-    def hook(step):
-        train_env.set_global_step(step)
-    return hook
+# ── Picklable hook ───────────────────────────────────────────────
+_PROCESS_ENV = {}
 
+class HoverHook:
+    def __init__(self, seed):
+        self.seed = seed
+    def __call__(self, step):
+        env = _PROCESS_ENV.get(self.seed)
+        if env is not None:
+            env.set_global_step(step)
 
-# ── Custom training loop for this experiment (hooks needed) ─────
-from utils.trainer import train as _train
-
-def run_hover_seeds(agent_fn, label, log_prefix):
-    all_seed_means = []
-    ts_ref = None
-
-    for seed in SEEDS:
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-
-        agent     = agent_fn(seed)
-        train_env = ChangingRewardLunarLander(switch_step=SWITCH_STEP, continuous=True)
-        eval_env  = HoverLunarLander(hover_bonus=200.0, continuous=True)   # phase-1 eval
-
-        ts, _, rets = _train(
-            agent, train_env, eval_env,
-            total_steps   = TOTAL_STEPS,
-            eval_every    = EVAL_EVERY,
-            eval_episodes = EVAL_EPS,
-            random_steps  = RANDOM_STEPS,
-            seed          = seed,
-            log_dir       = LOG_DIR,
-            run_name      = f"{log_prefix}_seed{seed}",
-            show_pbar     = True,
-            env_step_hook = make_hook(train_env),
-        )
-        seed_means = [np.mean(r) for r in rets]
-        all_seed_means.append(seed_means)
-        if ts_ref is None:
-            ts_ref = ts
-        train_env.close()
-        eval_env.close()
-
-    arr  = np.array(all_seed_means)
-    mean = arr.mean(axis=0)
-    std  = arr.std(axis=0)
-
-    import json
-    Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
-    with open(f"{LOG_DIR}/{log_prefix}_aggregated.json", "w") as f:
-        json.dump({"timesteps": ts_ref, "mean": mean.tolist(), "std": std.tolist()}, f)
-
-    return ts_ref, mean, std
+def make_hook_fn(seed):
+    return HoverHook(seed)
 
 
 if __name__ == "__main__":
+    from utils.trainer import run_seeds
+    from utils.plotting import plot_curves
+    print(f"Using device: {DEVICE}")
+
+    # ── Fixed alpha ──────────────────────────────────────────────
     print("=== Fixed alpha = 0.01 ===")
-    ts_fixed, mean_fixed, std_fixed = run_hover_seeds(
-        make_fixed_alpha_agent, "Fixed α=0.01", "fixed_alpha"
+    ts_fixed, mean_fixed, std_fixed = run_seeds(
+        agent_fn         = make_fixed_alpha_agent,
+        train_env_fn     = make_changing_train_env,
+        eval_env_fn      = make_hover_eval_env,
+        seeds            = SEEDS,
+        total_steps      = TOTAL_STEPS,
+        eval_every       = EVAL_EVERY,
+        eval_episodes    = EVAL_EPS,
+        random_steps     = RANDOM_STEPS,
+        log_dir          = LOG_DIR,
+        run_prefix       = "fixed_alpha",
+        env_step_hook_fn = make_hook_fn,
+        n_workers        = None,
     )
 
+    # ── Auto alpha ───────────────────────────────────────────────
     print("=== Auto alpha ===")
-    ts_auto, mean_auto, std_auto = run_hover_seeds(
-        make_auto_alpha_agent, "Auto α", "auto_alpha"
+    ts_auto, mean_auto, std_auto = run_seeds(
+        agent_fn         = make_auto_alpha_agent,
+        train_env_fn     = make_changing_train_env,
+        eval_env_fn      = make_hover_eval_env,
+        seeds            = SEEDS,
+        total_steps      = TOTAL_STEPS,
+        eval_every       = EVAL_EVERY,
+        eval_episodes    = EVAL_EPS,
+        random_steps     = RANDOM_STEPS,
+        log_dir          = LOG_DIR,
+        run_prefix       = "auto_alpha",
+        env_step_hook_fn = make_hook_fn,
+        n_workers        = None,
     )
 
-    # Annotate switch point
-    switch_x = SWITCH_STEP
-
+    # ── Plot ─────────────────────────────────────────────────────
     fig, ax = plot_curves(
         [
             {"label": "Fixed α=0.01", "timesteps": ts_fixed, "mean": mean_fixed, "std": std_fixed},
@@ -155,7 +132,7 @@ if __name__ == "__main__":
         title     = "LunarLander Hover Reward: +200 → -100 at 250K steps",
         save_path = f"{LOG_DIR}/plots/hover_comparison.png",
     )
-    ax.axvline(x=switch_x, color="black", linestyle="--", linewidth=1.5, label="Reward switch")
+    ax.axvline(x=SWITCH_STEP, color="black", linestyle="--", linewidth=1.5, label="Reward switch")
     ax.legend()
     fig.savefig(f"{LOG_DIR}/plots/hover_comparison.png", dpi=150)
     print("Done.")
