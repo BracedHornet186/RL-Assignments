@@ -111,7 +111,7 @@ def run_hover_seeds(agent_fn, label, log_prefix):
             seed          = seed,
             log_dir       = LOG_DIR,
             run_name      = f"{log_prefix}_seed{seed}",
-            verbose       = True,
+            show_pbar     = True,
             env_step_hook = make_hook(train_env),
         )
         seed_means = [np.mean(r) for r in rets]
