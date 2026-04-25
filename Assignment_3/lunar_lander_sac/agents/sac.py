@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Normal, Categorical
 import numpy as np
+import os
 
 
 # ─────────────────────────────────────────────
@@ -227,6 +228,36 @@ class SAC:
     def store(self, obs, action, reward, next_obs, done):
         self.replay.add(obs, action, reward, next_obs, done)
 
+    def save(self, path: str):
+        """Save all network weights and optimiser states to a .pt file."""
+        ckpt = {
+            "actor":          self.actor.state_dict(),
+            "critic":         self.critic.state_dict(),
+            "critic_target":  self.critic_target.state_dict(),
+            "actor_opt":      self.actor_opt.state_dict(),
+            "critic_opt":     self.critic_opt.state_dict(),
+            "alpha":          self.alpha,
+        }
+        if self.auto_alpha:
+            ckpt["log_alpha"]  = self.log_alpha.detach().cpu()
+            ckpt["alpha_opt"]  = self.alpha_opt.state_dict()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        torch.save(ckpt, path)
+
+    def load(self, path: str):
+        """Load weights from a checkpoint saved by save()."""
+        ckpt = torch.load(path, map_location=self.device)
+        self.actor.load_state_dict(ckpt["actor"])
+        self.critic.load_state_dict(ckpt["critic"])
+        self.critic_target.load_state_dict(ckpt["critic_target"])
+        self.actor_opt.load_state_dict(ckpt["actor_opt"])
+        self.critic_opt.load_state_dict(ckpt["critic_opt"])
+        self.alpha = ckpt["alpha"]
+        if self.auto_alpha and "log_alpha" in ckpt:
+            with torch.no_grad():
+                self.log_alpha.copy_(ckpt["log_alpha"].to(self.device))
+            self.alpha_opt.load_state_dict(ckpt["alpha_opt"])
+
 
 # ─────────────────────────────────────────────
 #  DISCRETE SAC
@@ -377,3 +408,31 @@ class DiscreteSAC:
 
     def store(self, obs, action, reward, next_obs, done):
         self.replay.add(obs, np.array([action]), reward, next_obs, done)
+
+    def save(self, path: str):
+        ckpt = {
+            "actor":         self.actor.state_dict(),
+            "critic":        self.critic.state_dict(),
+            "critic_target": self.critic_target.state_dict(),
+            "actor_opt":     self.actor_opt.state_dict(),
+            "critic_opt":    self.critic_opt.state_dict(),
+            "alpha":         self.alpha,
+        }
+        if self.auto_alpha:
+            ckpt["log_alpha"] = self.log_alpha.detach().cpu()
+            ckpt["alpha_opt"] = self.alpha_opt.state_dict()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        torch.save(ckpt, path)
+
+    def load(self, path: str):
+        ckpt = torch.load(path, map_location=self.device)
+        self.actor.load_state_dict(ckpt["actor"])
+        self.critic.load_state_dict(ckpt["critic"])
+        self.critic_target.load_state_dict(ckpt["critic_target"])
+        self.actor_opt.load_state_dict(ckpt["actor_opt"])
+        self.critic_opt.load_state_dict(ckpt["critic_opt"])
+        self.alpha = ckpt["alpha"]
+        if self.auto_alpha and "log_alpha" in ckpt:
+            with torch.no_grad():
+                self.log_alpha.copy_(ckpt["log_alpha"].to(self.device))
+            self.alpha_opt.load_state_dict(ckpt["alpha_opt"])

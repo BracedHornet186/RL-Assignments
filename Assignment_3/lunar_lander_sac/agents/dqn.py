@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import os
 from agents.sac import ReplayBuffer, mlp
 
 
@@ -67,6 +68,22 @@ class DQN:
 
     def store(self, obs, action, reward, next_obs, done):
         self.replay.add(obs, np.array([action]), reward, next_obs, done)
+
+    def save(self, path: str):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        torch.save({
+            "qnet":        self.qnet.state_dict(),
+            "qnet_target": self.qnet_target.state_dict(),
+            "optimizer":   self.optimizer.state_dict(),
+            "steps":       self.steps,
+        }, path)
+
+    def load(self, path: str):
+        ckpt = torch.load(path, map_location=self.device)
+        self.qnet.load_state_dict(ckpt["qnet"])
+        self.qnet_target.load_state_dict(ckpt["qnet_target"])
+        self.optimizer.load_state_dict(ckpt["optimizer"])
+        self.steps = ckpt["steps"]
 
     def _soft_update(self):
         for p, tp in zip(self.qnet.parameters(), self.qnet_target.parameters()):

@@ -125,6 +125,10 @@ def train(
             f,
         )
 
+    # Save final network weights
+    weights_path = os.path.join(log_dir, f"{run_name}.pt")
+    agent.save(weights_path)
+
     return timesteps, mean_rets, all_rets
 
 
