@@ -66,10 +66,10 @@ def train(theta, seed=0, total_steps=100000, device=None, workers=None, show_pba
     returns = []
     
     best_return = -float('inf')
-    if reward == 1:
+    if reward_scale == 1:
         mode = "auto" if learnable_temperature else f"manual_a{init_temperature}"
     else:
-        mode = "auto" if learnable_temperature else f"manual_a{init_temperature}_rs{reward_scale}"
+        mode = f"auto_rs{reward_scale}" if learnable_temperature else f"manual_a{init_temperature}_rs{reward_scale}"
     if exp_name is None:
         exp_name = f"theta{theta}_seed{seed}_{mode}_rs{reward_scale}"
 
@@ -120,9 +120,9 @@ def train(theta, seed=0, total_steps=100000, device=None, workers=None, show_pba
                 "alpha": round(agent.alpha.item(), 3)
             })
 
-    torch.save(agent.actor.state_dict(), f"models/{mode}/actor_{exp_name}_last.pth")
+    torch.save(agent.actor.state_dict(), f"models/pendulum/{mode}/actor_{exp_name}_last.pth")
 
-    filename = f"logs/{mode}/pendulum_{exp_name}.csv"
+    filename = f"logs/pendulum/{mode}/pendulum_{exp_name}.csv"
     with open(filename, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["step", "return"])

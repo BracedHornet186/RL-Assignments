@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 def load_runs(mode, scale):
     # Resolve the exact subfolder name based on your updated train.py logic
     if mode == "auto":
-        folder_name = "auto"
+        folder_name = f"auto_rs{scale}"
     else:
         folder_name = f"{mode}_rs{scale}" # e.g., manual_a0.01_rs10.0
         

@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def load_runs(theta):
-    files = glob.glob(f"logs/pendulum_theta{theta}_seed*.csv")
+    files = glob.glob(f"logs/auto/pendulum_theta{theta}_seed*.csv")
 
     runs = []
     steps = None
