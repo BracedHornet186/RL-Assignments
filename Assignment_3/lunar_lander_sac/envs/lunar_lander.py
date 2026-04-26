@@ -52,36 +52,30 @@ class HoverLunarLander(gym.Wrapper):
 
 class ChangingRewardLunarLander:
     """
-    Wrapper that serves as a training-time reward switcher.
+    Wrapper that switches the hover bonus mid-training without
+    destroying the underlying env (which would require a reset).
+
     Phase 1: hover_bonus = +200
     Phase 2 (after switch_step): hover_bonus = -100
 
     Usage:
         env = ChangingRewardLunarLander(switch_step=200_000)
-        env.set_global_step(current_step)  # call before every episode
+        env.set_global_step(current_step)  # call before every env step
     """
     def __init__(self, switch_step: int, continuous: bool = True):
-        self.switch_step  = switch_step
-        self.continuous   = continuous
-        self._global_step = 0
-        self._env = None
-        self._rebuild()
-
-    def _rebuild(self):
-        bonus = -100.0 if self._global_step >= self.switch_step else 200.0
-        if self._env is not None:
-            self._env.close()
-        self._env = HoverLunarLander(hover_bonus=bonus, continuous=self.continuous)
+        self.switch_step   = switch_step
+        self.continuous    = continuous
+        self._global_step  = 0
+        self._switched     = False
+        self._env = HoverLunarLander(hover_bonus=200.0, continuous=continuous)
 
     def set_global_step(self, step: int):
-        old_phase = self._global_step >= self.switch_step
         self._global_step = step
-        new_phase = self._global_step >= self.switch_step
-        if old_phase != new_phase:
-            self._rebuild()
+        if not self._switched and step >= self.switch_step:
+            self._switched = True
+            self._env.hover_bonus = -100.0   # update in-place, no rebuild needed
             print(f"\n[Env] Reward switched at step {step}: hover bonus → -100\n")
 
-    # Delegate the gym API
     def reset(self, **kwargs):
         return self._env.reset(**kwargs)
 

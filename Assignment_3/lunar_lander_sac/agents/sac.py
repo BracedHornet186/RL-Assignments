@@ -330,9 +330,12 @@ class DiscreteSAC:
         self.critic_opt = optim.Adam(self.critic.parameters(), lr=lr)
 
         if auto_alpha:
-            self.target_entropy = -np.log(1.0 / n_actions) * 0.98
+            # Target entropy = 50% of max entropy (log n_actions).
+            # Using full log(n) like continuous SAC pushes alpha too high
+            # and collapses the policy to near-uniform, killing learning.
+            self.target_entropy = 0.5 * np.log(n_actions)
             self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
-            self.alpha_opt = optim.Adam([self.log_alpha], lr=lr)
+            self.alpha_opt = optim.Adam([self.log_alpha], lr=1e-4)  # slower lr for stability
             self.alpha = self.log_alpha.exp().item()
         else:
             self.alpha = alpha
@@ -367,6 +370,7 @@ class DiscreteSAC:
 
         self.critic_opt.zero_grad()
         critic_loss.backward()
+        nn.utils.clip_grad_norm_(self.critic.parameters(), 1.0)
         self.critic_opt.step()
 
         # ── Actor loss ───────────────────────────────────────────
@@ -377,17 +381,20 @@ class DiscreteSAC:
 
         self.actor_opt.zero_grad()
         actor_loss.backward()
+        nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)
         self.actor_opt.step()
 
-        # ── Alpha loss ───────────────────────────────────────────
+        # ── Alpha loss (standard formulation) ────────────────────
         alpha_loss = 0.0
         if self.auto_alpha:
-            entropy = -(probs * log_probs).sum(dim=-1)
-            alpha_loss = (self.log_alpha * (entropy - self.target_entropy).detach()).mean()
+            with torch.no_grad():
+                _, probs_a, log_probs_a = self.actor.sample(obs)
+                entropy = -(probs_a * log_probs_a).sum(dim=-1)
+            alpha_loss = -(self.log_alpha * (self.target_entropy - entropy).detach()).mean()
             self.alpha_opt.zero_grad()
             alpha_loss.backward()
             self.alpha_opt.step()
-            self.alpha = self.log_alpha.exp().item()
+            self.alpha = self.log_alpha.exp().clamp(0.01, 1.0).item()
             alpha_loss = alpha_loss.item()
 
         self._soft_update()

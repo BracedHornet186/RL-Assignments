@@ -200,7 +200,7 @@ def run_seeds(
     verbose          = True,      # kept for API compat; ignored (pbar replaces it)
     discrete         = False,
     env_step_hook_fn = None,
-    n_workers        = None,      # None = all CPU cores; 1 = sequential
+    n_workers        = 10,      # None = all CPU cores; 1 = sequential
 ):
     """
     Run training across multiple seeds, sequentially or in parallel.
