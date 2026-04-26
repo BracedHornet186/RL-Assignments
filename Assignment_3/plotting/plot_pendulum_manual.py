@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 def load_runs(theta, alpha):
     # Updated pattern to look inside the specific mode subfolder
-    search_pattern = f"logs/manual_a{alpha}/*theta{theta}_seed*.csv"
+    search_pattern = f"logs/pendulum/manual_a{alpha}/*theta{theta}_seed*.csv"
     files = glob.glob(search_pattern)
 
     runs = []
@@ -51,10 +51,23 @@ def plot_q5a():
             std = runs.std(axis=0)
             ci = std / np.sqrt(runs.shape[0])  # standard error
             
-            # Plot the line and confidence interval
-            line, = ax.plot(steps, mean, label=f"α = {alpha}", linewidth=2)
+            best_idx = np.argmax(mean)
+            best_step = steps[best_idx]
+            best_value = mean[best_idx]
+            last_step = steps[-1]
+            last_value = mean[-1]
+
+            label = (
+                f"α = {alpha} | "
+                f"Best: {best_value:.1f} | Last: {last_value:.1f}"
+            )
+
+            # Plot the line, confidence interval, and best/last markers
+            line, = ax.plot(steps, mean, label=label, linewidth=2)
             color = line.get_color()
             ax.fill_between(steps, mean - ci, mean + ci, alpha=0.2, color=color)
+            ax.scatter(best_step, best_value, color=color, marker="o", s=45, zorder=5)
+            ax.scatter(last_step, last_value, color=color, marker="s", s=45, zorder=5)
             
         ax.set_title(f"Target Angle: θ = {theta}°", fontsize=14, fontweight='bold')
         ax.set_xlabel("Environment Timesteps", fontsize=12)

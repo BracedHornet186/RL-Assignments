@@ -69,10 +69,19 @@ def plot_for_eval_reward(eval_reward):
             print(e)
             continue
 
-        label = f"SAC-{train_reward} (avg {n_seeds} seeds)"
+        best_idx = np.argmax(mean_ret)
+        best_step = steps[best_idx]
+        best_value = mean_ret[best_idx]
+        last_step = steps[-1]
+        last_value = mean_ret[-1]
+
+        label = (
+            f"SAC-{train_reward} (avg {n_seeds} seeds | "
+            f"Best: {best_value:.1f} | Last: {last_value:.1f})"
+        )
         color = COLORS[train_reward]
 
-        plt.plot(steps, mean_ret, label=label, color=color)
+        plt.plot(steps, mean_ret, label=label, color=color, linewidth=2)
         plt.fill_between(
             steps,
             mean_ret - stderr_ret,
@@ -80,15 +89,17 @@ def plot_for_eval_reward(eval_reward):
             color=color,
             alpha=0.2,
         )
+        plt.scatter(best_step, best_value, color=color, marker="o", s=60, zorder=5)
+        plt.scatter(last_step, last_value, color=color, marker="s", s=60, zorder=5)
 
     plt.xlabel("Environment Timesteps", fontsize=12)
-    plt.ylabel(f"Average Return (evaluated as R{eval_reward[-1]})", fontsize=12)
+    plt.ylabel(f"Average Return (evaluated as {eval_reward})", fontsize=12)
     plt.title(
         f"Q2.3.3(c): Average Return vs Timesteps\nEvaluation Reward = {eval_reward}",
         fontsize=13,
     )
     plt.grid(True, linestyle="--", alpha=0.4)
-    plt.legend()
+    plt.legend(loc="best", framealpha=0.9, fontsize=10)
     plt.tight_layout()
 
     out_path = os.path.join(PLOTS_DIR, f"cross_compare_eval_{eval_reward}.png")

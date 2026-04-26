@@ -1,79 +1,118 @@
+# plotting/plot_cross_compare.py
+
 import os
 import glob
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
-def load_runs(theta):
-    files = glob.glob(f"logs/auto/pendulum_theta{theta}_seed*.csv")
+LOG_DIR = os.path.join("logs", "reacher")
+PLOTS_DIR = "plots"
 
-    runs = []
-    steps = None
+os.makedirs(PLOTS_DIR, exist_ok=True)
+
+TRAIN_REWARDS = ["Ra", "Rb", "Rc"]
+EVAL_REWARDS = ["Ra", "Rb", "Rc"]
+COLORS = {"Ra": "tab:blue", "Rb": "tab:orange", "Rc": "tab:green"}
+
+
+def load_runs(train_reward, eval_reward):
+    """
+    Load all CSV logs for a given training reward formulation, and pick
+    the column corresponding to the evaluation reward.
+
+    Expected filename pattern:
+        logs/reacher/reacher_easy_<train_reward>_seed*.csv
+
+    Expected columns (example for Ra-training):
+        step, return_Ra, return_Rb, return_Rc
+    """
+    pattern = os.path.join(LOG_DIR, f"reacher_easy_{train_reward}_seed*.csv")
+    files = sorted(glob.glob(pattern))
+    if not files:
+        raise FileNotFoundError(f"No logs found for pattern {pattern}")
+
+    col_name = f"return_{eval_reward}"
+
+    all_steps = []
+    all_returns = []
 
     for f in files:
-        data = np.loadtxt(f, delimiter=",", skiprows=1)
-        data = np.atleast_2d(data)
+        df = pd.read_csv(f)
+        df = df.sort_values("step")
+        if col_name not in df.columns:
+            raise KeyError(f"{col_name} not found in {f}")
+        all_steps.append(df["step"].to_numpy())
+        all_returns.append(df[col_name].to_numpy())
 
-        if steps is None:
-            steps = data[:, 0]   # actual steps from file
+    steps = all_steps[0]
+    returns = np.stack(all_returns, axis=0)  # [num_seeds, num_steps]
+    mean = returns.mean(axis=0)
+    stderr = returns.std(axis=0) / np.sqrt(returns.shape[0])
 
-        runs.append(data[:, 1])  # returns
+    return steps, mean, stderr, len(files)
 
-    return steps, np.array(runs)
 
-def plot_all():
-    cwd = os.getcwd()
-    save_dir = os.path.join(cwd,'plots')
-    targets = [0,-10,30, -60, 90, -90, 120, -150]
+def plot_for_eval_reward(eval_reward):
+    """
+    For a fixed evaluation reward R_i, plot curves for agents trained with
+    Ra, Rb, Rc, using the corresponding return_Ri column.
+    """
+    plt.figure(figsize=(7, 5))
 
-    plt.figure(figsize=(10, 6))
+    for train_reward in TRAIN_REWARDS:
+        try:
+            steps, mean_ret, stderr_ret, n_seeds = load_runs(
+                train_reward, eval_reward
+            )
+        except (FileNotFoundError, KeyError) as e:
+            print(e)
+            continue
 
-    for theta in targets:
-        steps, runs = load_runs(theta)
-
-        # --- Skip the first evaluation point (Step 0) ---
-        # This removes the massive initial negative reward from the plot scale
-        steps = steps[1:]
-        
-        runs = runs[:, 1:]
-
-        mean = runs.mean(axis=0)
-        std = runs.std(axis=0)
-        ci = std / np.sqrt(runs.shape[0])
-
-        # Get best and last values
-        best_idx = np.argmax(mean)
+        # Best / last stats
+        best_idx = np.argmax(mean_ret)
         best_step = steps[best_idx]
-        best_value = mean[best_idx]
+        best_value = mean_ret[best_idx]
 
         last_step = steps[-1]
-        last_value = mean[-1]
+        last_value = mean_ret[-1]
 
-        # Format the legend label to include Best and Last cleanly
-        label_text = f"θ={theta} (Best: {best_value:.1f} | Last: {last_value:.1f})"
+        label = (
+            f"SAC-{train_reward} (avg {n_seeds} seeds | "
+            f"Best: {best_value:.1f} | Last: {last_value:.1f})"
+        )
+        color = COLORS[train_reward]
 
-        # Plot line and grab its color
-        line, = plt.plot(steps, mean, label=label_text, linewidth=2)
-        color = line.get_color()
+        # Line + CI
+        line, = plt.plot(steps, mean_ret, label=label, color=color, linewidth=2)
+        plt.fill_between(
+            steps,
+            mean_ret - stderr_ret,
+            mean_ret + stderr_ret,
+            color=color,
+            alpha=0.2,
+        )
 
-        # Plot confidence interval
-        plt.fill_between(steps, mean - ci, mean + ci, alpha=0.2, color=color)
-
-        # Plot markers for Best (circle) and Last (square) without floating text
-        plt.scatter(best_step, best_value, color=color, marker='o', s=60, zorder=5)
-        plt.scatter(last_step, last_value, color=color, marker='s', s=60, zorder=5)
+        # Markers for Best (circle) and Last (square)
+        plt.scatter(best_step, best_value, color=color, marker="o", s=60, zorder=5)
+        plt.scatter(last_step, last_value, color=color, marker="s", s=60, zorder=5)
 
     plt.xlabel("Environment Timesteps", fontsize=12)
-    plt.ylabel("Average Undiscounted Return", fontsize=12)
-    plt.title("SAC Performance: Pendulum-v1", fontsize=14)
-    
-    # Place the legend cleanly in the bottom right corner
-    plt.legend(loc="lower right", fontsize=11, framealpha=0.9)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    
+    plt.ylabel(f"Average Return (evaluated as {eval_reward})", fontsize=12)
+    plt.title(
+        f"Q2.3.3(c): Average Return vs Timesteps\nEvaluation Reward = {eval_reward}",
+        fontsize=13,
+    )
+    plt.grid(True, linestyle="--", alpha=0.4)
+    plt.legend(loc="best", framealpha=0.9, fontsize=10)
     plt.tight_layout()
-    # Saves a high-res image for your assignment submission
-    plt.savefig(os.path.join(save_dir,"sac_pendulum_plot.png"), dpi=300) 
-    plt.show()
+
+    out_path = os.path.join(PLOTS_DIR, f"cross_compare_eval_{eval_reward}.png")
+    plt.savefig(out_path, dpi=300)
+    print(f"Saved {out_path}")
+    plt.close()
+
 
 if __name__ == "__main__":
-    plot_all()
+    for eval_reward in EVAL_REWARDS:
+        plot_for_eval_reward(eval_reward)

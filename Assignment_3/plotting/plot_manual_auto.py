@@ -60,9 +60,20 @@ def plot_q5b():
             
             mean_m = runs_m.mean(axis=0)
             ci_m = runs_m.std(axis=0) / np.sqrt(runs_m.shape[0])
+            best_idx_m = np.argmax(mean_m)
+            best_step_m = steps_m[best_idx_m]
+            best_value_m = mean_m[best_idx_m]
+            last_step_m = steps_m[-1]
+            last_value_m = mean_m[-1]
             
-            line_m, = ax.plot(steps_m, mean_m, label=f"Manual α = {best_alpha}", linewidth=2, color='red')
+            label_m = (
+                f"Manual α = {best_alpha} | "
+                f"Best: {best_value_m:.1f} | Last: {last_value_m:.1f}"
+            )
+            line_m, = ax.plot(steps_m, mean_m, label=label_m, linewidth=2, color='red')
             ax.fill_between(steps_m, mean_m - ci_m, mean_m + ci_m, alpha=0.2, color='red')
+            ax.scatter(best_step_m, best_value_m, color='red', marker="o", s=55, zorder=5)
+            ax.scatter(last_step_m, last_value_m, color='red', marker="s", s=55, zorder=5)
 
         # 2. Load and plot AUTOMATED tuning data (Blue)
         steps_a, runs_a = load_runs("auto", scale)
@@ -72,9 +83,20 @@ def plot_q5b():
             
             mean_a = runs_a.mean(axis=0)
             ci_a = runs_a.std(axis=0) / np.sqrt(runs_a.shape[0])
+            best_idx_a = np.argmax(mean_a)
+            best_step_a = steps_a[best_idx_a]
+            best_value_a = mean_a[best_idx_a]
+            last_step_a = steps_a[-1]
+            last_value_a = mean_a[-1]
             
-            line_a, = ax.plot(steps_a, mean_a, label="Auto-Tuned α", linewidth=2, color='blue')
+            label_a = (
+                f"Auto-Tuned α | "
+                f"Best: {best_value_a:.1f} | Last: {last_value_a:.1f}"
+            )
+            line_a, = ax.plot(steps_a, mean_a, label=label_a, linewidth=2, color='blue')
             ax.fill_between(steps_a, mean_a - ci_a, mean_a + ci_a, alpha=0.2, color='blue')
+            ax.scatter(best_step_a, best_value_a, color='blue', marker="o", s=55, zorder=5)
+            ax.scatter(last_step_a, last_value_a, color='blue', marker="s", s=55, zorder=5)
             
         ax.set_title(f"Reward Scale: {scale}x", fontsize=14, fontweight='bold')
         ax.set_xlabel("Environment Timesteps", fontsize=12)
