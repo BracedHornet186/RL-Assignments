@@ -1,14 +1,5 @@
 """
-DA6400 RL PA3 - Section 2.3: Reacher (DeepMind Control Suite)
-
-FIXED VERSION — 4 bottlenecks resolved:
-  1. Eval envs created ONCE before training, reused every eval call
-  2. ReplayBuffer uses pinned memory + non-blocking GPU transfer
-  3. select_action reuses pre-allocated tensor; set_to_none=True on zero_grad
-  4. Soft target update uses torch._foreach (vectorised, no Python loop)
-  + run_experiments uses a process pool (max N_PARALLEL at a time, not 45 at once)
-  + Skips already-completed seeds (resume-friendly)
-  + tqdm progress bar with ETA
+DA6400 RL PA3 - Section 2.3: Reacher
 """
 
 import numpy as np
@@ -54,13 +45,6 @@ def reward_ra(to_target, action):
 def reward_rb(to_target):
     dist = float(np.linalg.norm(to_target))
     return (1.0, True) if dist < 0.05 else (0.0, False)
-
-def reward_rc(to_target, velocity):
-    dist = float(np.linalg.norm(to_target))
-    vel  = float(np.linalg.norm(velocity))
-    in_t = dist < 0.05
-    return -1.0, bool(in_t and vel < 0.05), in_t
-
 
 # ─────────────────────────────────────────────────────────
 # ENVIRONMENT WRAPPER
@@ -108,17 +92,29 @@ class ReacherEnv:
         elif self.rtype == "rb":
             r, in_t = reward_rb(tt)
             done, trunc = False, self._step >= EPISODE_LENGTH
-        else:
-            r, done, in_t = reward_rc(tt, vel)
-            trunc = self._step >= EPISODE_LENGTH
-            if trunc: done = False
+        else:  # rc
+            dist = float(np.linalg.norm(tt))
+            v    = float(np.linalg.norm(vel))
+            in_t = dist < 0.05
+            terminal = bool(in_t and v < 0.05)
+            r = -1.0
+            done = terminal
+            trunc = False                         # Rc episodes never truncate
+            if not terminal and self._step >= EPISODE_LENGTH:
+                # Timeout: -20 penalty, env resets, but episode CONTINUES
+                r += -20.0
+                ts_reset = self.env.reset()
+                od = ts_reset.observation
+                self._step = 0
+                tt   = np.array(od["to_target"]).flatten()
+                in_t = float(np.linalg.norm(tt)) < 0.05
 
         self._od = od
         return self._flat(od), r, done, trunc, {"in_target": in_t, "to_target": tt}
 
 
 # ─────────────────────────────────────────────────────────
-# REPLAY BUFFER  ← FIX 2
+# REPLAY BUFFER
 # ─────────────────────────────────────────────────────────
 
 class ReplayBuffer:
@@ -268,7 +264,7 @@ class SAC:
 
 
 # ─────────────────────────────────────────────────────────
-# EVALUATION  ← FIX 1: envs passed in, never created inside
+# EVALUATION
 # ─────────────────────────────────────────────────────────
 
 def evaluate_policy(agent, eval_envs, n_eps=EVAL_EPISODES, ep_len=EPISODE_LENGTH):
