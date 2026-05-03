@@ -334,7 +334,7 @@ class DiscreteSAC:
             # Using full log(n) like continuous SAC pushes alpha too high
             # and collapses the policy to near-uniform, killing learning.
             self.target_entropy = 0.5 * np.log(n_actions)
-            self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
+            self.log_alpha = torch.full((1,), -1.0, requires_grad=True, device=device)
             self.alpha_opt = optim.Adam([self.log_alpha], lr=1e-4)  # slower lr for stability
             self.alpha = self.log_alpha.exp().item()
         else:

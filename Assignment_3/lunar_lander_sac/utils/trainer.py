@@ -52,6 +52,7 @@ def train(
     show_pbar:     bool = True,
     discrete:      bool = False,
     env_step_hook       = None,   # fn(global_step) -> None
+    save_every:    int  = None,   # save checkpoint every N steps; None = only at end
 ):
     """
     Main training loop for one seed.
@@ -114,6 +115,11 @@ def train(
             all_rets.append(rets)
             pbar.set_postfix({"ret": f"{mean_r:+.1f}", "±": f"{std_r:.1f}"})
 
+        # Periodic checkpoint
+        if save_every is not None and step % save_every == 0:
+            ckpt_path = os.path.join(log_dir, f"{run_name}_step{step}.pt")
+            agent.save(ckpt_path)
+
         pbar.update(1)
 
     pbar.close()
@@ -151,6 +157,7 @@ def _seed_worker(args):
         show_pbar,
         discrete,
         env_step_hook_fn,
+        save_every,
     ) = args
 
     np.random.seed(seed)
@@ -175,6 +182,7 @@ def _seed_worker(args):
         show_pbar     = show_pbar,
         discrete      = discrete,
         env_step_hook = hook,
+        save_every    = save_every,
     )
 
     seed_means = [np.mean(r) for r in rets_per_eval]
@@ -197,10 +205,11 @@ def run_seeds(
     random_steps     = 10_000,
     log_dir          = "logs",
     run_prefix       = "run",
-    verbose          = True,      # kept for API compat; ignored (pbar replaces it)
+    verbose          = True,
     discrete         = False,
     env_step_hook_fn = None,
-    n_workers        = 10,      # None = all CPU cores; 1 = sequential
+    n_workers        = None,
+    save_every       = None,   # e.g. 50_000 saves a .pt every 50K steps per seed
 ):
     """
     Run training across multiple seeds, sequentially or in parallel.
@@ -226,7 +235,12 @@ def run_seeds(
     All fn arguments (agent_fn, etc.) must be picklable — define them at
     module level, not as lambdas or closures over unpicklable objects.
     """
-    n_workers = n_workers if n_workers is not None else mp.cpu_count()
+    # Auto-select n_workers:
+    # - GPU available → 1 worker (single GPU can't meaningfully run multiple
+    #   training loops in parallel; they just serialize on the device)
+    # - CPU only → all cores
+    if n_workers is None:
+        n_workers = 1 if torch.cuda.is_available() else mp.cpu_count()
     n_workers = min(n_workers, len(seeds))
 
     worker_args = [
@@ -241,9 +255,10 @@ def run_seeds(
             random_steps,
             log_dir,
             run_prefix,
-            True,           # show_pbar inside every worker
+            True,
             discrete,
             env_step_hook_fn,
+            save_every,
         )
         for seed in seeds
     ]

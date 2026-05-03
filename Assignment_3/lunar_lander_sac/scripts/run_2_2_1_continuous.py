@@ -1,52 +1,41 @@
 """
-Q2.2 Part 1 & 2
-Train continuous SAC on LunarLander-v3 (continuous actions).
-Automated temperature tuning with target entropy.
-15 seeds, evaluate every 10K steps using 20 offline episodes.
+Q2.2 Parts 1 & 2 — Continuous SAC on LunarLander-v3.
+Saves checkpoints every 50K steps for later replay/visualisation.
 """
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np
 import torch
-import gymnasium as gym
 
-from agents.sac import SAC
-from utils.trainer import run_seeds
-from utils.plotting import plot_curves
-
-# ── Config ──────────────────────────────────────────────────────
 SEEDS        = list(range(2))
-TOTAL_STEPS  = 300_000     # sufficient for LunarLander convergence
+TOTAL_STEPS  = 300_000
 EVAL_EVERY   = 10_000
 EVAL_EPS     = 20
 RANDOM_STEPS = 10_000
+SAVE_EVERY   = 50_000   # saves seed0_step50000.pt, seed0_step100000.pt, ...
 LOG_DIR      = "logs/q2_2_1_continuous"
 DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
+
+OBS_DIM    = 8
+ACTION_DIM = 2
 
 
-# ── Environment factory ──────────────────────────────────────────
 def make_train_env(seed):
+    import gymnasium as gym
     env = gym.make("LunarLander-v3", continuous=True)
     env.reset(seed=seed)
     return env
 
 def make_eval_env():
+    import gymnasium as gym
     return gym.make("LunarLander-v3", continuous=True)
 
-
-# ── Agent factory ────────────────────────────────────────────────
 def make_agent(seed):
-    env = gym.make("LunarLander-v3", continuous=True)
-    obs_dim    = env.observation_space.shape[0]   # 8
-    action_dim = env.action_space.shape[0]         # 2
-    env.close()
-
+    from agents.sac import SAC
     return SAC(
-        obs_dim    = obs_dim,
-        action_dim = action_dim,
+        obs_dim    = OBS_DIM,
+        action_dim = ACTION_DIM,
         lr         = 3e-4,
         gamma      = 0.99,
         tau        = 0.005,
@@ -58,8 +47,11 @@ def make_agent(seed):
     )
 
 
-# ── Run ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    from utils.trainer import run_seeds
+    from utils.plotting import plot_curves
+    print(f"Using device: {DEVICE}")
+
     ts, mean, std = run_seeds(
         agent_fn      = make_agent,
         train_env_fn  = make_train_env,
@@ -71,7 +63,8 @@ if __name__ == "__main__":
         random_steps  = RANDOM_STEPS,
         log_dir       = LOG_DIR,
         run_prefix    = "sac_continuous",
-        verbose       = True,
+        save_every    = SAVE_EVERY,
+        n_workers     = None,
     )
 
     plot_curves(

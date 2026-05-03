@@ -12,7 +12,7 @@ TOTAL_STEPS  = 500_000
 EVAL_EVERY   = 10_000
 EVAL_EPS     = 20
 RANDOM_STEPS = 10_000
-LOG_DIR      = "logs/q2_2_4_discrete"
+LOG_DIR      = "logs/q2_2_4_discrete_test"
 DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
 
 OBS_DIM   = 8
@@ -33,8 +33,8 @@ def make_discrete_sac(seed):
     from agents.sac import DiscreteSAC
     return DiscreteSAC(
         obs_dim=OBS_DIM, n_actions=N_ACTIONS,
-        lr=3e-4, gamma=0.99, tau=0.005,
-        batch_size=256, buffer_size=300_000,
+        lr=1e-4, gamma=0.99, tau=0.005,
+        batch_size=512, buffer_size=300_000,
         hidden=(256, 256), auto_alpha=True,
         device=DEVICE,
     )
@@ -66,22 +66,9 @@ if __name__ == "__main__":
         discrete=True, n_workers=None,
     )
 
-    print("=== DQN ===")
-    ts_dqn, mean_dqn, std_dqn = run_seeds(
-        agent_fn=make_dqn, train_env_fn=make_train_env,
-        eval_env_fn=make_eval_env, seeds=SEEDS,
-        total_steps=TOTAL_STEPS, eval_every=EVAL_EVERY,
-        eval_episodes=EVAL_EPS, random_steps=RANDOM_STEPS,
-        log_dir=LOG_DIR, run_prefix="dqn",
-        discrete=True, n_workers=None,
-    )
-
     plot_curves(
-        [
-            {"label": "Discrete SAC (auto-α)", "timesteps": ts_sac, "mean": mean_sac, "std": std_sac},
-            {"label": "DQN",                   "timesteps": ts_dqn, "mean": mean_dqn, "std": std_dqn},
-        ],
-        title     = "Discrete-SAC vs DQN on LunarLander-v3 (Discrete)",
-        save_path = f"{LOG_DIR}/plots/discrete_sac_vs_dqn.png",
+        [{"label": "Discrete SAC (auto-α)", "timesteps": ts_sac, "mean": mean_sac, "std": std_sac}],
+        title     = "Discrete-SAC on LunarLander-v3 (Discrete)",
+        save_path = f"{LOG_DIR}/plots/discrete_sac.png",
     )
     print("Done.")
