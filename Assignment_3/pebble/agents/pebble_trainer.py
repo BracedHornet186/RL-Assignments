@@ -12,6 +12,13 @@ Algorithm (Lee et al. 2021):
   6. Evaluate against GT reward every eval_every steps.
 """
 
+import sys, os
+# Ensure the project root is on sys.path so subprocesses (spawn) can
+# import agents/, envs/, utils/ regardless of where the script lives.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import numpy as np
 import torch
 import os
@@ -80,7 +87,7 @@ def train_pebble(
     log_dir          = "logs/pebble",
     run_name         = "pebble_run",
     show_pbar        = True,
-    device           = "cpu",
+    device           = "cuda",
 ):
     """
     Full PEBBLE training for one seed.
@@ -250,7 +257,7 @@ def _pebble_seed_worker(args):
 def run_pebble_seeds(
     env_fn, eval_env_fn, gt_reward_fn, obs_dim, action_dim, seeds,
     total_steps=100_000, query_budget=500, log_dir="logs/pebble",
-    run_prefix="pebble", device="cpu", n_workers=None, **kwargs,
+    run_prefix="pebble", device="cpu", n_workers=8, **kwargs,
 ):
     """
     Run PEBBLE over multiple seeds, sequentially or in parallel.
@@ -259,8 +266,8 @@ def run_pebble_seeds(
     import multiprocessing as mp
     import torch as _torch
 
-    if n_workers is None:
-        n_workers = 1 if _torch.cuda.is_available() else mp.cpu_count()
+    # if n_workers is None:
+    #     n_workers = 1 if _torch.cuda.is_available() else mp.cpu_count()
     n_workers = min(n_workers, len(seeds))
 
     worker_args = [

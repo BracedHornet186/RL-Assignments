@@ -1,12 +1,12 @@
 """
 PEBBLE: Feedback Efficient Interactive Reinforcement Learning via
 Relabelling Experience and Unsupervised Pre-training (Lee et al. 2021)
-
-Key components:
-  - RewardModel   : MLP that maps (obs, action) -> scalar reward
-  - PreferenceBuffer : stores (segment1, segment2, label) triples
-  - SimulatedTeacher : labels preferences using ground-truth reward
 """
+
+import sys, os
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 import numpy as np
 import torch

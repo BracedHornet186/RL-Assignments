@@ -33,30 +33,47 @@ TARGET_ANGLES = [0, -60, 90, 120, -150]
 # Feedback budgets for Part 2
 BUDGETS = [50, 100, 200, 500, 1000]
 
-
+import functools
 # ── Env / reward factories ───────────────────────────────────────
-def make_pendulum_env(theta_deg):
-    def _fn(seed):
+def _create_pendulum_env(theta_deg):
         from envs.pendulum import PendulumTargetEnv
         env = PendulumTargetEnv(theta_target_deg=theta_deg)
-        env.reset(seed=seed)
         return env
-    return _fn
 
-def make_pendulum_eval_env(theta_deg):
-    def _fn():
-        from envs.pendulum import PendulumTargetEnv
-        return PendulumTargetEnv(theta_target_deg=theta_deg)
-    return _fn
-
-def make_gt_reward_fn(theta_deg):
-    """Returns a function that computes GT return for a segment."""
+def _create_pendulum_env_with_seed(seed, theta_deg):
     from envs.pendulum import PendulumTargetEnv
     env = PendulumTargetEnv(theta_target_deg=theta_deg)
-    def gt_fn(obs_seq, act_seq):
-        return env.gt_segment_return(obs_seq, act_seq)
-    return gt_fn
+    env.reset(seed=seed)
+    return env
 
+# 2. Bind only theta_deg. The resulting object will expect 'seed' when called.
+def make_pendulum_env(theta_deg):
+    return functools.partial(_create_pendulum_env_with_seed, theta_deg=theta_deg)
+
+def make_pendulum_eval_env(theta_deg):
+    # functools.partial creates a picklable callable 
+    # that "remembers" the theta_deg argument.
+    return functools.partial(_create_pendulum_env, theta_deg=theta_deg)
+
+def _compute_gt_segment_return(obs_seq, act_seq, theta_deg):
+    from envs.pendulum import PendulumTargetEnv
+    # Instantiate the env locally within the worker process when called
+    env = PendulumTargetEnv(theta_target_deg=theta_deg)
+    return env.gt_segment_return(obs_seq, act_seq)
+
+
+# 2. The factory function now returns a picklable partial object
+def make_gt_reward_fn(theta_deg):
+    """Returns a picklable function that computes GT return for a segment."""
+    return functools.partial(_compute_gt_segment_return, theta_deg=theta_deg)
+
+
+def make_agent(seed):
+    from agents.sac import SAC
+    return SAC(obs_dim=OBS_DIM, action_dim=ACTION_DIM,
+                lr=3e-4, gamma=0.99, tau=0.005,
+                batch_size=256, buffer_size=200_000,
+                hidden=(256, 256), auto_alpha=True, device=DEVICE)
 
 # ── SAC with GT reward (baseline) ───────────────────────────────
 def run_sac_gt(theta_deg, seeds, log_dir):
@@ -64,11 +81,7 @@ def run_sac_gt(theta_deg, seeds, log_dir):
     from agents.sac import SAC
     from utils.trainer import run_seeds
 
-    def make_agent(seed):
-        return SAC(obs_dim=OBS_DIM, action_dim=ACTION_DIM,
-                   lr=3e-4, gamma=0.99, tau=0.005,
-                   batch_size=256, buffer_size=200_000,
-                   hidden=(256, 256), auto_alpha=True, device=DEVICE)
+    
 
     ts, mean, std = run_seeds(
         agent_fn     = make_agent,
@@ -81,7 +94,7 @@ def run_sac_gt(theta_deg, seeds, log_dir):
         random_steps = RANDOM_STEPS,
         log_dir      = log_dir,
         run_prefix   = f"sac_gt_theta{theta_deg}",
-        n_workers    = None,
+        n_workers    = 8,
     )
     return ts, mean, std
 
