@@ -217,55 +217,95 @@ def train_pebble(
     return timesteps_list, gt_returns_list, all_rets
 
 
+
+# ─────────────────────────────────────────────
+#  Per-seed worker (top-level so pickle works)
+# ─────────────────────────────────────────────
+def _pebble_seed_worker(args):
+    """Runs one PEBBLE seed in a subprocess. Returns (seed, timesteps, means)."""
+    (
+        seed, env_fn, eval_env_fn, gt_reward_fn,
+        obs_dim, action_dim, total_steps, query_budget,
+        log_dir, run_prefix, device, kwargs,
+    ) = args
+
+    import numpy as np
+    import torch
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    ts, means, _ = train_pebble(
+        env_fn=env_fn, eval_env_fn=eval_env_fn, gt_reward_fn=gt_reward_fn,
+        obs_dim=obs_dim, action_dim=action_dim, total_steps=total_steps,
+        seed=seed, query_budget=query_budget, log_dir=log_dir,
+        run_name=f"{run_prefix}_seed{seed}", show_pbar=True,
+        device=device, **kwargs,
+    )
+    return seed, ts, means
+
+
+# ─────────────────────────────────────────────
+#  Multi-seed runner  (sequential or parallel)
+# ─────────────────────────────────────────────
 def run_pebble_seeds(
-    env_fn,
-    eval_env_fn,
-    gt_reward_fn,
-    obs_dim,
-    action_dim,
-    seeds,
-    total_steps   = 100_000,
-    query_budget  = 500,
-    log_dir       = "logs/pebble",
-    run_prefix    = "pebble",
-    device        = "cpu",
-    **kwargs,
+    env_fn, eval_env_fn, gt_reward_fn, obs_dim, action_dim, seeds,
+    total_steps=100_000, query_budget=500, log_dir="logs/pebble",
+    run_prefix="pebble", device="cpu", n_workers=None, **kwargs,
 ):
-    """Run PEBBLE over multiple seeds, return aggregated curves."""
-    all_seed_means = []
-    ts_ref = None
+    """
+    Run PEBBLE over multiple seeds, sequentially or in parallel.
+    n_workers=None: auto (1 if CUDA, else all cores).
+    """
+    import multiprocessing as mp
+    import torch as _torch
 
-    for seed in seeds:
-        ts, means, _ = train_pebble(
-            env_fn        = env_fn,
-            eval_env_fn   = eval_env_fn,
-            gt_reward_fn  = gt_reward_fn,
-            obs_dim       = obs_dim,
-            action_dim    = action_dim,
-            total_steps   = total_steps,
-            seed          = seed,
-            query_budget  = query_budget,
-            log_dir       = log_dir,
-            run_name      = f"{run_prefix}_seed{seed}",
-            device        = device,
-            **kwargs,
-        )
-        all_seed_means.append(means)
-        if ts_ref is None:
-            ts_ref = ts
+    if n_workers is None:
+        n_workers = 1 if _torch.cuda.is_available() else mp.cpu_count()
+    n_workers = min(n_workers, len(seeds))
 
-    arr  = np.array(all_seed_means)
-    mean = arr.mean(axis=0)
-    std  = arr.std(axis=0)
+    worker_args = [
+        (seed, env_fn, eval_env_fn, gt_reward_fn, obs_dim, action_dim,
+         total_steps, query_budget, log_dir, run_prefix, device, kwargs)
+        for seed in seeds
+    ]
 
+    results = {}
+    seeds_bar = tqdm(
+        total=len(seeds), desc="seeds done", unit="seed",
+        dynamic_ncols=True, colour="green", position=0, leave=True,
+    )
+
+    if n_workers == 1:
+        for args in worker_args:
+            seed, ts, means = _pebble_seed_worker(args)
+            results[seed] = (ts, means)
+            seeds_bar.update(1)
+            seeds_bar.set_postfix({"last_seed": seed})
+    else:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=n_workers) as pool:
+            for seed, ts, means in pool.imap_unordered(_pebble_seed_worker, worker_args):
+                results[seed] = (ts, means)
+                seeds_bar.update(1)
+                seeds_bar.set_postfix({"last_seed": seed})
+                tqdm.write(f"  ✓ seed {seed} finished  ({len(results)}/{len(seeds)})")
+
+    seeds_bar.close()
+
+    timesteps_ref  = results[seeds[0]][0]
+    all_seed_means = np.array([results[s][1] for s in seeds])
+    mean_over      = all_seed_means.mean(axis=0)
+    std_over       = all_seed_means.std(axis=0)
+
+    Path(log_dir).mkdir(parents=True, exist_ok=True)
     agg_path = os.path.join(log_dir, f"{run_prefix}_aggregated.json")
     with open(agg_path, "w") as f:
         json.dump({
-            "timesteps": ts_ref,
-            "mean": mean.tolist(),
-            "std":  std.tolist(),
-            "all_seeds": arr.tolist(),
+            "timesteps": timesteps_ref,
+            "mean":      mean_over.tolist(),
+            "std":       std_over.tolist(),
+            "all_seeds": all_seed_means.tolist(),
         }, f)
     tqdm.write(f"✓ Saved aggregated → {agg_path}")
 
-    return ts_ref, mean, std
+    return timesteps_ref, mean_over, std_over

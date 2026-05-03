@@ -111,6 +111,7 @@ def run_pebble(theta_deg, seeds, log_dir, budget=500, run_prefix=None):
         log_dir       = log_dir,
         run_prefix    = prefix,
         device        = DEVICE,
+        n_workers     = 8,
     )
     return ts, mean, std
 
