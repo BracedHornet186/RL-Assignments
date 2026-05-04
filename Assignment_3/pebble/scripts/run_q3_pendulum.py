@@ -13,7 +13,7 @@ import torch
 import json
 from pathlib import Path
 
-SEEDS         = list(range(2))
+SEEDS         = [0, 1, 2, 4]
 TOTAL_STEPS   = 100_000
 EVAL_EVERY    = 10_000
 EVAL_EPS      = 20
@@ -75,43 +75,105 @@ def make_agent(seed):
                 batch_size=256, buffer_size=200_000,
                 hidden=(256, 256), auto_alpha=True, device=DEVICE)
 
+def get_missing_seeds(seeds, log_dir, prefix):
+    """Checks individual seed JSON files to ensure they reached TOTAL_STEPS."""
+    missing = []
+    for seed in seeds:
+        # Based on your trainer, individual seeds are saved as {prefix}_seed{seed}.json[cite: 3]
+        path = os.path.join(log_dir, f"{prefix}_seed{seed}.json")
+        if not os.path.exists(path):
+            missing.append(seed)
+            continue
+        try:
+            with open(path, 'r') as f:
+                data = json.load(f)
+            # Check if it hit the exact number of steps[cite: 3]
+            if not data.get("timesteps") or data["timesteps"][-1] < TOTAL_STEPS:
+                missing.append(seed)
+        except (json.JSONDecodeError, KeyError):
+            missing.append(seed) # File is corrupted, needs retraining
+    return missing
+
+def load_and_aggregate(seeds, log_dir, prefix):
+    """Manually aggregates all seeds. Bypasses the default aggregated.json to allow partial resumes."""
+    all_means = []
+    ts_ref = None
+    for seed in seeds:
+        path = os.path.join(log_dir, f"{prefix}_seed{seed}.json")
+        with open(path, 'r') as f:
+            data = json.load(f)
+            # PEBBLE uses "gt_returns"[cite: 3]. Fallbacks added in case SAC uses a different key.
+            returns = data.get("gt_returns") or data.get("eval_returns") or data.get("returns")
+            all_means.append(returns)
+            if ts_ref is None:
+                ts_ref = data["timesteps"]
+    
+    arr = np.array(all_means)
+    return ts_ref, arr.mean(axis=0), arr.std(axis=0)
+
 # ── SAC with GT reward (baseline) ───────────────────────────────
 def run_sac_gt(theta_deg, seeds, log_dir):
     """Train SAC with ground-truth reward — the upper-bound baseline."""
+    prefix = f"sac_gt_theta{theta_deg}"
+    
+    missing_seeds = get_missing_seeds(seeds, log_dir, prefix)
+
+    if not missing_seeds:
+        print(f"⏭️  Skipping {prefix} - all {len(seeds)} seeds complete.")
+        return load_and_aggregate(seeds, log_dir, prefix)
+
+    if missing_seeds != seeds:
+        print(f"⚠️  Resuming {prefix}. Training missing seeds: {missing_seeds}")
+    else:
+        print(f"▶️  Starting {prefix}...")
+
     from agents.sac import SAC
     from utils.trainer import run_seeds
 
-    
-
-    ts, mean, std = run_seeds(
+    # Only pass the missing_seeds to save compute time
+    run_seeds(
         agent_fn     = make_agent,
         train_env_fn = make_pendulum_env(theta_deg),
         eval_env_fn  = make_pendulum_eval_env(theta_deg),
-        seeds        = seeds,
+        seeds        = missing_seeds,
         total_steps  = TOTAL_STEPS,
         eval_every   = EVAL_EVERY,
         eval_episodes= EVAL_EPS,
         random_steps = RANDOM_STEPS,
         log_dir      = log_dir,
-        run_prefix   = f"sac_gt_theta{theta_deg}",
-        n_workers    = 15,
+        run_prefix   = prefix,
+        n_workers    = 4,
     )
-    return ts, mean, std
+    
+    # Aggregate ALL seeds (both previously completed and newly finished)
+    return load_and_aggregate(seeds, log_dir, prefix)
 
 
 # ── PEBBLE ───────────────────────────────────────────────────────
 def run_pebble(theta_deg, seeds, log_dir, budget=500, run_prefix=None):
-    from agents.pebble_trainer import run_pebble_seeds
+    from agents.pebble_trainer import run_pebble_seeds_parallel
 
     prefix = run_prefix or f"pebble_theta{theta_deg}_budget{budget}"
+    
+    missing_seeds = get_missing_seeds(seeds, log_dir, prefix)
 
-    ts, mean, std = run_pebble_seeds(
+    if not missing_seeds:
+        print(f"⏭️  Skipping {prefix} - all {len(seeds)} seeds complete.")
+        return load_and_aggregate(seeds, log_dir, prefix)
+
+    if missing_seeds != seeds:
+        print(f"⚠️  Resuming {prefix}. Training missing seeds: {missing_seeds}")
+    else:
+        print(f"▶️  Starting {prefix}...")
+
+    # Only pass the missing_seeds to save compute time
+    run_pebble_seeds_parallel(
         env_fn        = make_pendulum_env(theta_deg),
         eval_env_fn   = make_pendulum_eval_env(theta_deg),
         gt_reward_fn  = make_gt_reward_fn(theta_deg),
         obs_dim       = OBS_DIM,
         action_dim    = ACTION_DIM,
-        seeds         = seeds,
+        seeds         = missing_seeds,
         total_steps   = TOTAL_STEPS,
         query_budget  = budget,
         query_every   = QUERY_EVERY,
@@ -124,10 +186,11 @@ def run_pebble(theta_deg, seeds, log_dir, budget=500, run_prefix=None):
         log_dir       = log_dir,
         run_prefix    = prefix,
         device        = DEVICE,
-        n_workers     = 15,
+        n_workers     = 4,
     )
-    return ts, mean, std
-
+    
+    # Aggregate ALL seeds (both previously completed and newly finished)
+    return load_and_aggregate(seeds, log_dir, prefix)
 
 if __name__ == "__main__":
     from utils.plotting import plot_curves
