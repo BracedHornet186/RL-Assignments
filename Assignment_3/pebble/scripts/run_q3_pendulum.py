@@ -13,7 +13,7 @@ import torch
 import json
 from pathlib import Path
 
-SEEDS         = list(range(15))
+SEEDS         = list(range(2))
 TOTAL_STEPS   = 100_000
 EVAL_EVERY    = 10_000
 EVAL_EPS      = 20
@@ -94,7 +94,7 @@ def run_sac_gt(theta_deg, seeds, log_dir):
         random_steps = RANDOM_STEPS,
         log_dir      = log_dir,
         run_prefix   = f"sac_gt_theta{theta_deg}",
-        n_workers    = 8,
+        n_workers    = 15,
     )
     return ts, mean, std
 
@@ -124,7 +124,7 @@ def run_pebble(theta_deg, seeds, log_dir, budget=500, run_prefix=None):
         log_dir       = log_dir,
         run_prefix    = prefix,
         device        = DEVICE,
-        n_workers     = 8,
+        n_workers     = 15,
     )
     return ts, mean, std
 
