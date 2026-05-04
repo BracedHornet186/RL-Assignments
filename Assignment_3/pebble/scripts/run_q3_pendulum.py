@@ -13,7 +13,7 @@ import torch
 import json
 from pathlib import Path
 
-SEEDS         = [0, 1, 2, 4]
+SEEDS         = list(range(15))
 TOTAL_STEPS   = 100_000
 EVAL_EVERY    = 10_000
 EVAL_EPS      = 20
@@ -95,15 +95,23 @@ def get_missing_seeds(seeds, log_dir, prefix):
     return missing
 
 def load_and_aggregate(seeds, log_dir, prefix):
-    """Manually aggregates all seeds. Bypasses the default aggregated.json to allow partial resumes."""
+    """Manually aggregates all seeds using the verified JSON keys."""
     all_means = []
     ts_ref = None
     for seed in seeds:
         path = os.path.join(log_dir, f"{prefix}_seed{seed}.json")
         with open(path, 'r') as f:
             data = json.load(f)
-            # PEBBLE uses "gt_returns"[cite: 3]. Fallbacks added in case SAC uses a different key.
-            returns = data.get("gt_returns") or data.get("eval_returns") or data.get("returns")
+            
+            # Dynamically grab the rewards whether it's a SAC log or a PEBBLE log
+            returns = data.get("mean_returns") or data.get("gt_returns")
+            
+            if returns is None:
+                raise KeyError(
+                    f"Could not find the reward array in {path}.\n"
+                    f"Keys found: {list(data.keys())}"
+                )
+                
             all_means.append(returns)
             if ts_ref is None:
                 ts_ref = data["timesteps"]
