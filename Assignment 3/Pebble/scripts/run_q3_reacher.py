@@ -20,6 +20,7 @@ SEGMENT_LEN  = 50
 BUDGET       = 1000
 LOG_DIR      = "logs/q3_pebble_reacher"
 DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
+N_WORKERS    = 5   # run 5 seeds in parallel
 
 OBS_DIM    = None   # set after env init
 ACTION_DIM = None
@@ -138,9 +139,14 @@ class ReacherWrapper:
 
 
 if __name__ == "__main__":
-    from agents.pebble_trainer import run_pebble_seeds
+    from agents.pebble_trainer import run_pebble_seeds_parallel
     from utils.plotting import plot_curves
-    print(f"Using device: {DEVICE}")
+    import multiprocessing as mp
+    try:
+        mp.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
+    print(f"Using device: {DEVICE} | parallel workers: {N_WORKERS}")
 
     # Get dims from a temporary env
     from dm_control import suite
@@ -161,7 +167,7 @@ if __name__ == "__main__":
         def gt_fn(obs_seq, act_seq, _rfn=teacher_reward_fn):
             return gt_segment_return(_rfn, obs_seq, act_seq)
 
-        ts, mean, std = run_pebble_seeds(
+        ts, mean, std = run_pebble_seeds_parallel(
             env_fn       = make_reacher_env(reward_name),
             eval_env_fn  = make_reacher_eval_env(reward_name),
             gt_reward_fn = gt_fn,
@@ -179,6 +185,7 @@ if __name__ == "__main__":
             log_dir      = LOG_DIR,
             run_prefix   = f"pebble_{reward_name}",
             device       = DEVICE,
+            n_workers    = N_WORKERS,
         )
         curves.append({
             "label":     f"PEBBLE (teacher={reward_name})",
