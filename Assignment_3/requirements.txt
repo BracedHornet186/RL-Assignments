@@ -4,3 +4,4 @@ numpy
 matplotlib
 hydra-core
 tqdm
+pandas
