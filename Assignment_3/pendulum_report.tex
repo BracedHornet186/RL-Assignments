@@ -1,0 +1,73 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{float}
+\usepackage{xcolor}
+
+\begin{document}
+
+% ── Q1: Pendulum ─────────────────────────────────────────────────────────────
+\paragraph*{Problem 1}
+\begin{enumerate}
+    \item \textbf{Reward Function Design:} The primary objective is to drive the pendulum to a specific target angle $\theta_{\text{target}}$ and stabilize it there indefinitely. To achieve this, we design a dense, smooth reward function that provides informative gradients across the entire state space:
+    \begin{equation}
+    R(s, a) = - \Delta\theta^2 - 0.1 \dot{\theta}^2 - 0.001 u^2
+    \end{equation}
+    The first term, $\Delta\theta^2$, where $\Delta\theta = \text{atan2}(\sin(\theta - \theta_{\text{target}}), \cos(\theta - \theta_{\text{target}}))$, serves as the position penalty. Using the $\text{atan2}$ formulation ensures that the agent always perceives the shortest angular path to the target, preventing unnecessary full rotations. Squaring the difference creates a parabolic cost landscape that is steepest far from the target and flat at the goal, providing a strong directive for the agent to move towards $\theta_{\text{target}}$.
+    
+    The second term, $- 0.1 \dot{\theta}^2$, is a crucial damping component. In a continuous control environment like the Pendulum, an agent rewarded solely on position would likely reach the target with high kinetic energy, leading to persistent oscillations or overshoot. By penalizing angular velocity, we encourage the agent to arrive at the target with zero momentum, facilitating a "soft landing" and steady-state stability.
+    
+    The final term, $- 0.001 u^2$, regularizes the control effort. It penalizes excessive torque (action $u$), which prevents the policy from exhibiting aggressive "bang-bang" control. This promotes energy efficiency and ensures a smoother, more realistic policy that avoids high-frequency chatter in the torque output, which is essential for the longevity of physical actuators.
+
+    \item \textbf{SAC Implementation with Automated Tuning:} Soft Actor-Critic (SAC) is an off-policy actor-critic algorithm based on the maximum entropy reinforcement learning framework. Our implementation incorporates several key architectural features to ensure stable and efficient learning:
+    \begin{itemize}
+        \item \textbf{Squashed Gaussian Policy:} The actor outputs the mean and standard deviation of a Gaussian distribution. We apply the reparameterization trick ($a = f_\phi(\epsilon; s)$) to allow backpropagation through stochastic nodes. The resulting action is passed through a Tanh activation to squash it into the $[-1, 1]$ range, which is then scaled to the environment's torque limits.
+        \item \textbf{Clipped Double-Q Learning:} To combat the well-known overestimation bias in Q-learning, we maintain two independent critic networks and use the minimum of their predictions for the policy and value updates. This conservative estimate prevents the agent from being trapped in sub-optimal "optimistic" local minima.
+        \item \textbf{Automated Temperature Tuning:} Instead of a fixed entropy weight $\alpha$, we treat $\alpha$ as a learnable parameter. The agent optimizes $\alpha$ to maintain a target entropy $\bar{H} = -|\mathcal{A}| = -1$. This automation is critical because the relative scale of the reward and entropy bonus can shift dramatically during training; a learnable $\alpha$ ensures that exploration is prioritized early on while allowing the policy to become deterministic (exploitative) as it converges on the optimal behavior.
+    \end{itemize}
+
+    \item \textbf{Comparison of Results for Different $\theta_{\text{target}}$:} The experimental results demonstrate that the difficulty of the task is intrinsically linked to the physics of gravitational torque. 
+    \begin{itemize}
+        \item \textbf{Stable Equilibrium Targets ($\theta \approx \pm 180^\circ$):} Targets like $\theta = -150^\circ$ show the fastest convergence and highest returns (Best $\approx -80$). These positions are physically close to the natural hanging position where gravity assists in stabilization. The agent needs minimal torque to counteract gravity, allowing it to stay stationary with high precision.
+        \item \textbf{Unstable Horizontal Targets ($\theta = \pm 90^\circ$):} These are the most challenging configurations. At $90^\circ$, the gravitational torque ($mgl \sin\theta$) is at its maximum. To maintain this position, the agent must apply a perfectly matched, constant torque. Any stochasticity in the policy (due to entropy) or lag in control leads to a deviation that gravity quickly amplifies, resulting in a large drop and severe penalty. This is reflected in the significantly lower returns (Last $\approx -1500$) and higher variance observed in the curves.
+        \item \textbf{Upright Target ($\theta = 0^\circ$):} While gravity is zero at the vertical, the position is an unstable equilibrium. The agent must learn a delicate balance to stay upright, making it harder than the hanging positions but easier than the horizontal ones.
+    \end{itemize}
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=0.9\textwidth]{images/sac_pendulum_plot.png}
+        \caption{SAC performance for various target angles $\theta_{\text{target}}$ in Pendulum-v1. Note the significant performance gap between stable hanging positions and unstable horizontal targets.}
+        \label{fig:sac_pendulum}
+    \end{figure}
+
+    \item \textbf{Optimal Behavior Analysis:} The optimal policy must master two distinct physical and behavioral regimes:
+    \begin{enumerate}
+        \item \textbf{Reachability (The Transient Phase):} This involves the dynamic swing-up (or swing-down) maneuver. The agent must understand the system's inertia and gravitational effects to reach $\theta_{\text{target}}$ efficiently. For targets far from the initial state, the agent may need to build momentum by swinging in the opposite direction first (though the torque limit of $2.0$ usually allows a direct lift). The optimal transient behavior minimizes the time-integrated angular error and velocity.
+        \item \textbf{Regulation (The Steady-State Phase):} Once the target is reached, the behavior shifts from dynamics to statics. The agent must apply a constant, precise counter-torque. In the horizontal case, this torque must exactly equal $mgl \sin\theta_{\text{target}}$. The optimal behavior here is characterized by a "collapsed" action distribution with near-zero variance, as any exploration at the goal is counter-productive and leads to oscillation.
+    \end{enumerate}
+
+    \item \textbf{Manual Tuning and Reward Scaling:}
+    \begin{enumerate}
+        \item \textbf{Manual vs. Automated Tuning:} The manual tuning grid search ($\alpha \in \{0.01, 0.05, 0.2, 0.5\}$) reveals that the environment is extremely sensitive to the entropy-reward trade-off. Larger $\alpha$ values (e.g., 0.5) prevent the agent from ever achieving high precision; the entropy bonus forces the agent to keep exploring, resulting in constant "jitter" at the target that incurs high penalties from the quadratic reward terms. Small values like $0.01$ allow for the near-deterministic control required for horizontal stabilization. Automated tuning is clearly superior as it eliminates the need for this target-specific hyperparameter search, providing a robust mechanism to scale exploration based on the current policy's confidence.
+        \begin{figure}[H]
+            \centering
+            \includegraphics[width=0.9\textwidth]{images/q5a_manual_alpha_comparison.png}
+            \caption{Evaluation of fixed entropy temperatures. Higher $\alpha$ values lead to catastrophic "chatter" at the goal, particularly for horizontal targets like $90^\circ$.}
+            \label{fig:q5a}
+        \end{figure}
+
+        \item \textbf{Reward Scaling Effects ($\theta = 90^\circ$):} Scaling the reward by $10\times$ or $0.1\times$ highlights the fragility of fixed hyperparameters. When rewards are scaled by $10\times$, a fixed $\alpha=0.01$ becomes relatively "colder," prioritizing the now-massive rewards more heavily. Conversely, at $0.1\times$, the same $\alpha$ might be too "hot," leading to excessive jitter. In our experiments, the auto-tuned agent struggles to match the best manually tuned $\alpha$ in the $10\times$ case, likely because the entropy objective $-\alpha (\log \pi + \bar{H})$ converges more slowly than the rapidly scaling Q-values, or because the target entropy of $-1$ is slightly too high for the extreme precision required at $90^\circ$. However, auto-tuning remains the only viable strategy for general problems where the reward scale is not known a priori.
+        \begin{figure}[H]
+            \centering
+            \includegraphics[width=0.9\textwidth]{images/q5b_reward_scaling_comparison.png}
+            \caption{Comparison of tuning strategies under reward scaling. Manual $\alpha$ can outperform auto-tuning if perfectly matched to the scale, but lacks the necessary robustness for varying task scales.}
+            \label{fig:q5b}
+        \end{figure}
+    \end{enumerate}
+\end{enumerate}
+
+\end{document}
