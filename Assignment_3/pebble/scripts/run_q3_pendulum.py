@@ -150,7 +150,7 @@ def run_sac_gt(theta_deg, seeds, log_dir):
         random_steps = RANDOM_STEPS,
         log_dir      = log_dir,
         run_prefix   = prefix,
-        n_workers    = 4,
+        n_workers    = 8,
     )
     
     # Aggregate ALL seeds (both previously completed and newly finished)
@@ -194,7 +194,7 @@ def run_pebble(theta_deg, seeds, log_dir, budget=500, run_prefix=None):
         log_dir       = log_dir,
         run_prefix    = prefix,
         device        = DEVICE,
-        n_workers     = 4,
+        n_workers     = 8,
     )
     
     # Aggregate ALL seeds (both previously completed and newly finished)
@@ -203,61 +203,49 @@ def run_pebble(theta_deg, seeds, log_dir, budget=500, run_prefix=None):
 if __name__ == "__main__":
     from utils.plotting import plot_curves
     print(f"Using device: {DEVICE}")
-
-    # ── Part 1: SAC-GT vs PEBBLE for each θ_target ──────────────
-    print("\n=== Part 1: SAC-GT vs PEBBLE ===")
+ 
+    COLORS = ["#9C27B0", "#F44336", "#FF9800", "#4CAF50", "#00BCD4"]
+ 
+    # ── Part 2: Budget ablation for ALL θ_target angles ──────────
+    print("\n=== Part 2: Budget ablation for all θ_target angles ===")
+ 
     for theta in TARGET_ANGLES:
-        print(f"\n--- θ_target = {theta}° ---")
-        log_sub = f"{LOG_DIR}/theta_{theta}"
-
+        print(f"\n{'='*55}")
+        print(f"  θ_target = {theta}°")
+        print(f"{'='*55}")
+ 
+        log_sub = f"{LOG_DIR}/budget_ablation_theta{theta}"
+        curves  = []
+ 
+        # SAC-GT reference
         ts_gt, mean_gt, std_gt = run_sac_gt(theta, SEEDS, log_sub)
-        ts_pb, mean_pb, std_pb = run_pebble(theta, SEEDS, log_sub, budget=500)
-
-        plot_curves(
-            [
-                {"label": "SAC (GT reward)", "timesteps": ts_gt,
-                 "mean": mean_gt, "std": std_gt, "color": "#2196F3"},
-                {"label": "PEBBLE (budget=500)", "timesteps": ts_pb,
-                 "mean": mean_pb, "std": std_pb, "color": "#F44336"},
-            ],
-            title     = f"SAC-GT vs PEBBLE  |  θ_target = {theta}°",
-            ylabel    = "Average Undiscounted Return (GT)",
-            save_path = f"{log_sub}/plots/sac_vs_pebble.png",
-        )
-
-    # ── Part 2: Different budgets at θ_target = 90 ──────────────
-    print("\n=== Part 2: Budget ablation at θ_target = 90° ===")
-    theta = 90
-    log_sub = f"{LOG_DIR}/budget_ablation"
-    curves = []
-
-    COLORS = ["#9C27B0", "#F44336", "#FF9800", "#4CAF50", "#2196F3"]
-    for budget, color in zip(BUDGETS, COLORS):
-        print(f"\n  Budget = {budget}")
-        ts_pb, mean_pb, std_pb = run_pebble(
-            theta, SEEDS, log_sub, budget=budget,
-            run_prefix=f"pebble_budget{budget}"
-        )
         curves.append({
-            "label":     f"PEBBLE (budget={budget})",
-            "timesteps": ts_pb,
-            "mean":      mean_pb,
-            "std":       std_pb,
-            "color":     color,
+            "label": "SAC (GT reward)",
+            "timesteps": ts_gt, "mean": mean_gt, "std": std_gt,
+            "color": "black",
         })
-
-    # Add SAC-GT reference
-    ts_gt, mean_gt, std_gt = run_sac_gt(theta, SEEDS, log_sub)
-    curves.insert(0, {
-        "label": "SAC (GT reward)", "timesteps": ts_gt,
-        "mean": mean_gt, "std": std_gt, "color": "black",
-    })
-
-    plot_curves(
-        curves,
-        title     = "PEBBLE Budget Ablation  |  θ_target = 90°",
-        ylabel    = "Average Undiscounted Return (GT)",
-        save_path = f"{log_sub}/plots/budget_ablation.png",
-    )
-
+ 
+        # PEBBLE with each budget
+        for budget, color in zip(BUDGETS, COLORS):
+            print(f"\n  Budget = {budget}")
+            ts_pb, mean_pb, std_pb = run_pebble(
+                theta, SEEDS, log_sub, budget=budget,
+                run_prefix=f"pebble_budget{budget}",
+            )
+            curves.append({
+                "label":     f"PEBBLE (budget={budget})",
+                "timesteps": ts_pb,
+                "mean":      mean_pb,
+                "std":       std_pb,
+                "color":     color,
+            })
+ 
+        plot_curves(
+            curves,
+            title     = f"PEBBLE Budget Ablation  |  θ_target = {theta}°",
+            ylabel    = "Average Undiscounted Return (GT)",
+            save_path = f"{log_sub}/plots/budget_ablation.png",
+        )
+        print(f"  ✓ Plot saved for θ={theta}°")
+ 
     print("\nDone.")
