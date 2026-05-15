@@ -212,15 +212,20 @@ def train_pebble(
 
         # ── GT evaluation ────────────────────────────────────────
         if step % eval_every == 0:
+            # Hard cap on eval-episode length: some env wrappers (e.g. the
+            # Reacher Rc wrapper) never set `truncated=True`, so without this
+            # an unconverged policy makes each eval episode run forever.
+            eval_ep_cap = getattr(eval_env, "_max_steps", 1000)
             gt_rets = []
             for ep_i in range(eval_episodes):
                 e_obs, _ = eval_env.reset(seed=10000 + ep_i)
-                e_done, e_ret = False, 0.0
-                while not e_done:
+                e_done, e_ret, e_steps = False, 0.0, 0
+                while not e_done and e_steps < eval_ep_cap:
                     e_act = agent.select_action(e_obs, evaluate=True)
                     e_obs, e_r, e_term, e_trunc, _ = eval_env.step(e_act)
-                    e_ret += e_r
-                    e_done = e_term or e_trunc
+                    e_ret  += e_r
+                    e_steps += 1
+                    e_done  = e_term or e_trunc
                 gt_rets.append(e_ret)
 
             mean_r = np.mean(gt_rets)

@@ -206,7 +206,9 @@ class Critic(nn.Module):
 # ─────────────────────────────────────────────────────────
 
 class SAC:
-    def __init__(self, obs_dim, act_dim, act_limit, device):
+    def __init__(self, obs_dim, act_dim, act_limit, device,
+                 fixed_alpha=None, init_log_alpha=0.0,
+                 target_entropy_override=None):
         self.device = device
         self.actor  = Actor(obs_dim, act_dim, act_limit).to(device)
         self.critic = Critic(obs_dim, act_dim).to(device)
@@ -216,9 +218,18 @@ class SAC:
 
         self.a_opt  = optim.Adam(self.actor.parameters(),  lr=LR_ACTOR)
         self.c_opt  = optim.Adam(self.critic.parameters(), lr=LR_CRITIC)
-        self.target_entropy = -float(act_dim)
-        self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
-        self.al_opt    = optim.Adam([self.log_alpha], lr=LR_ALPHA)
+        self.fixed_alpha    = fixed_alpha
+        self.target_entropy = (target_entropy_override
+                               if target_entropy_override is not None
+                               else -float(act_dim))
+        if fixed_alpha is None:
+            self.log_alpha = torch.tensor([init_log_alpha], requires_grad=True,
+                                          device=device)
+            self.al_opt    = optim.Adam([self.log_alpha], lr=LR_ALPHA)
+        else:
+            self.log_alpha = torch.tensor([float(np.log(fixed_alpha))],
+                                          device=device)
+            self.al_opt    = None
 
         # FIX 3: pre-allocated obs tensor — avoids malloc every step
         self._obst = torch.zeros(1, obs_dim, device=device)
@@ -252,9 +263,10 @@ class SAC:
         self.a_opt.zero_grad(set_to_none=True)
         al.backward(); self.a_opt.step()
 
-        ent_l = -(self.log_alpha*(lp+self.target_entropy).detach()).mean()
-        self.al_opt.zero_grad(set_to_none=True)
-        ent_l.backward(); self.al_opt.step()
+        if self.fixed_alpha is None:
+            ent_l = -(self.log_alpha*(lp+self.target_entropy).detach()).mean()
+            self.al_opt.zero_grad(set_to_none=True)
+            ent_l.backward(); self.al_opt.step()
 
         # FIX 4: vectorised soft update (single CUDA kernel, no Python loop)
         with torch.no_grad():
@@ -302,9 +314,19 @@ def final_evaluate(agent, reward_type, seed):
 # ─────────────────────────────────────────────────────────
 
 def train_sac(reward_type, seed, total_timesteps=TOTAL_TIMESTEPS,
-              save_dir="results"):
-    fname = os.path.join(save_dir, f"sac_r{reward_type}_seed{seed}.json")
+              save_dir="results", utd_ratio=None, sac_kwargs=None,
+              run_tag=None, progress_file=None):
+    if utd_ratio is None:
+        utd_ratio = 4 if reward_type == "rc" else 1
+    tag   = run_tag if run_tag else f"sac_r{reward_type}"
+    fname = os.path.join(save_dir, f"{tag}_seed{seed}.json")
     if os.path.exists(fname):
+        # signal "100% done" to any external monitor so its bar can settle.
+        if progress_file is not None:
+            try:
+                with open(progress_file, "w") as f:
+                    f.write(f"{total_timesteps} {total_timesteps}\n")
+            except OSError: pass
         print(f"  [SKIP] {fname} exists."); return
 
     torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
@@ -318,15 +340,17 @@ def train_sac(reward_type, seed, total_timesteps=TOTAL_TIMESTEPS,
     eval_envs = {rt: ReacherEnv(reward_type=rt, seed=seed+1000)
                  for rt in ("ra","rb","rc")}
 
-    agent  = SAC(obs_dim, act_dim, act_lim, device)
+    agent  = SAC(obs_dim, act_dim, act_lim, device, **(sac_kwargs or {}))
     buffer = ReplayBuffer(obs_dim, act_dim)
 
     log = {"timesteps":[], "eval_ra":[], "eval_rb":[], "eval_rc":[]}
     obs = train_env.reset(); rng = np.random.default_rng(seed)
 
+    # When the parent monitors via progress_file, suppress this worker's bar.
     pbar = tqdm(total=total_timesteps,
-                desc=f"R{reward_type.upper()} s{seed}", unit="step",
-                dynamic_ncols=True)
+                desc=f"{tag} s{seed}", unit="step",
+                dynamic_ncols=True,
+                disable=(progress_file is not None))
 
     for n in range(1, total_timesteps+1):
         if n <= RANDOM_EXPLORE:
@@ -340,7 +364,8 @@ def train_sac(reward_type, seed, total_timesteps=TOTAL_TIMESTEPS,
         if done or trunc: obs = train_env.reset()
 
         if n >= RANDOM_EXPLORE and buffer.size >= BATCH_SIZE:
-            agent.update(buffer)
+            for _ in range(utd_ratio):
+                agent.update(buffer)
 
         if n % EVAL_INTERVAL == 0:
             rets = evaluate_policy(agent, eval_envs)
@@ -348,6 +373,12 @@ def train_sac(reward_type, seed, total_timesteps=TOTAL_TIMESTEPS,
             for rt in ("ra","rb","rc"): log[f"eval_{rt}"].append(rets[rt])
             pbar.set_postfix({f"R{reward_type.upper()}": f"{rets[reward_type]:+.1f}",
                               "α": f"{agent.alpha.item():.3f}"})
+
+        if progress_file is not None and n % 1000 == 0:
+            try:
+                with open(progress_file, "w") as f:
+                    f.write(f"{n} {total_timesteps}\n")
+            except OSError: pass
 
         pbar.update(1)
     pbar.close()
@@ -372,5 +403,33 @@ if __name__ == "__main__":
     p.add_argument("--seed",     type=int, default=0)
     p.add_argument("--steps",    type=int, default=TOTAL_TIMESTEPS)
     p.add_argument("--save_dir", default="results")
+    p.add_argument("--gamma",          type=float, default=None,
+                   help="Override discount factor (module-level GAMMA)")
+    p.add_argument("--target_entropy", type=float, default=None,
+                   help="Override target entropy (default = -act_dim)")
+    p.add_argument("--init_log_alpha", type=float, default=0.0,
+                   help="Initial log α for auto-tuned SAC (default 0 → α=1)")
+    p.add_argument("--fixed_alpha",    type=float, default=None,
+                   help="If set, disables auto-tune and uses this α")
+    p.add_argument("--utd_ratio",      type=int,   default=None,
+                   help="Gradient updates per env step "
+                        "(default: 4 for rc, 1 for ra/rb)")
+    p.add_argument("--run_tag",        type=str,   default=None,
+                   help="Filename tag (default 'sac_r<reward>')")
+    p.add_argument("--progress_file",  type=str,   default=None,
+                   help="Path to write 'step total' every 1K env steps "
+                        "(used by run_experiments.py to drive a parent tqdm bar)")
     a = p.parse_args()
-    train_sac(a.reward, a.seed, a.steps, a.save_dir)
+
+    if a.gamma is not None:
+        GAMMA = a.gamma                     # updates module global
+        print(f"  [hp] GAMMA overridden to {GAMMA}")
+
+    sac_kwargs = {}
+    if a.target_entropy is not None: sac_kwargs["target_entropy_override"] = a.target_entropy
+    if a.init_log_alpha != 0.0:      sac_kwargs["init_log_alpha"]          = a.init_log_alpha
+    if a.fixed_alpha is not None:    sac_kwargs["fixed_alpha"]             = a.fixed_alpha
+
+    train_sac(a.reward, a.seed, a.steps, a.save_dir,
+              utd_ratio=a.utd_ratio, sac_kwargs=sac_kwargs,
+              run_tag=a.run_tag, progress_file=a.progress_file)
